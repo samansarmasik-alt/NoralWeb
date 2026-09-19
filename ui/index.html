@@ -1,0 +1,706 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nöral Web</title>
+<style>
+:root{
+  --bg:#070b12; --bg2:#0b111c; --panel:rgba(17,24,39,.72); --panel-solid:#101827;
+  --line:rgba(148,163,184,.14); --line2:rgba(148,163,184,.22);
+  --txt:#e9eff8; --dim:#8b96ab;
+  --acc1:#8b5cf6; --acc2:#22d3ee;
+  --grad:linear-gradient(135deg,#8b5cf6,#22d3ee);
+  --r:14px; --font:Inter,"Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--txt);font:14px/1.5 var(--font);display:flex;overflow:hidden}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;
+  background:radial-gradient(900px 480px at 12% -8%,rgba(139,92,246,.14),transparent 60%),
+             radial-gradient(800px 420px at 88% 108%,rgba(34,211,238,.10),transparent 60%);}
+::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:#26314a;border-radius:8px;border:2px solid var(--bg)}
+button{font:inherit;color:inherit}
+/* ---------- sidebar ---------- */
+#side{width:248px;flex:none;background:var(--panel);backdrop-filter:blur(18px);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;padding:14px 12px;gap:12px;z-index:2}
+#brand{display:flex;align-items:center;gap:10px;padding:2px 6px}
+#brand svg{filter:drop-shadow(0 0 10px rgba(139,92,246,.55))}
+#brand b{font-size:15px;letter-spacing:.14em}
+#brand small{display:block;font-size:10px;letter-spacing:.08em;color:var(--dim);font-weight:400}
+#tabhead{font-size:10.5px;letter-spacing:.14em;color:var(--dim);padding:2px 8px;display:flex;justify-content:space-between;align-items:center}
+#tabcount{background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:10.5px}
+#tabs{display:flex;flex-direction:column;gap:7px;overflow-y:auto;flex:1;padding:2px}
+.tab{display:flex;align-items:center;gap:9px;background:rgba(255,255,255,.028);border:1px solid var(--line);
+  border-radius:11px;padding:8px 9px;cursor:pointer;transition:.16s;min-width:0}
+.tab:hover{border-color:var(--line2);transform:translateX(1px)}
+.tab.on{border:1px solid transparent;background:linear-gradient(rgba(20,28,46,.92),rgba(20,28,46,.92)) padding-box,var(--grad) border-box}
+.avatar{flex:none;width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:700;color:#fff}
+.tab .tt{min-width:0;flex:1}
+.tab .tt div{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tab .tt small{display:block;font-size:10.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tab .x{flex:none;border:0;background:none;color:var(--dim);cursor:pointer;font-size:13px;padding:2px 5px;border-radius:6px;opacity:0}
+.tab:hover .x{opacity:1}.tab .x:hover{color:#ff7b7b;background:rgba(255,80,80,.1)}
+#newtab{background:transparent;border:1px dashed var(--line2);color:var(--dim);border-radius:11px;padding:9px;cursor:pointer;transition:.18s}
+#newtab:hover{color:var(--txt);border-color:var(--acc1)}
+#status{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:7px;padding:4px 8px}
+#keys{border-top:1px solid var(--line);padding-top:10px}
+#keyrow{display:flex;gap:6px}
+#keysvc{background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:8px;color:var(--txt);font-size:11.5px;padding:7px 4px;outline:none;max-width:82px}
+#bravekey{flex:1;min-width:0;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:8px;color:var(--txt);font-size:11.5px;padding:7px 9px;outline:none}
+#bravekey:focus{border-color:var(--acc1)}
+#keysave{background:rgba(255,255,255,.05);border:1px solid var(--line2);border-radius:8px;font-size:11.5px;padding:7px 11px;cursor:pointer}
+#keysave:hover{border-color:var(--acc1)}
+#keystat{font-size:10.5px;color:var(--dim);padding:6px 8px 0}
+/* ---------- ajan ---------- */
+#agent{display:none;flex:1;flex-direction:column;min-height:0;max-width:860px;width:100%;margin:0 auto;padding:18px 22px}
+#agent.show{display:flex}
+#agentbar{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+#amsgs{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:6px 2px}
+.bubble{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 15px;font-size:13.5px;max-width:100%;word-wrap:break-word}
+.bubble.user{background:linear-gradient(#141c2e,#141c2e) padding-box,var(--grad) border-box;border:1px solid transparent;align-self:flex-end;max-width:85%}
+.bubble.assistant{align-self:flex-start;width:100%}
+.bubble.assistant a{color:var(--acc2)}
+.bubble .steps{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.stepchip{font-size:10.5px;border:1px solid var(--line2);border-radius:12px;padding:2px 9px;color:var(--acc2);background:rgba(34,211,238,.05)}
+#ainput{display:flex;gap:8px;padding-top:12px}
+#amsg{flex:1;background:rgba(255,255,255,.045);border:1px solid var(--line);border-radius:12px;color:var(--txt);font:inherit;font-size:14px;padding:11px 14px;outline:none}
+#amsg:focus{border-color:var(--acc1)}
+#asend{background:var(--grad);border:0;border-radius:11px;color:#fff;font-weight:700;padding:10px 22px;cursor:pointer}
+/* ---------- giriş kapısı ---------- */
+#gate{position:fixed;inset:0;z-index:50;background:rgba(3,6,12,.82);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center}
+#gatecard{background:#0d1424;border:1px solid var(--line2);border-radius:18px;padding:28px;width:min(430px,92%);text-align:center}
+#gatecard h2{font-size:19px;margin-bottom:8px}
+#gatecard h2 span{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+#gatecard p{font-size:12.5px;color:var(--dim);margin-bottom:14px}
+#gatekey{width:100%;background:rgba(255,255,255,.05);border:1px solid var(--line2);border-radius:10px;color:var(--txt);font-size:13px;padding:10px 12px;outline:none;margin-bottom:10px}
+#gatego{width:100%;background:var(--grad);border:0;border-radius:10px;color:#fff;font-weight:700;padding:11px;cursor:pointer;font-size:14px}
+#gateskip{background:none;border:0;color:var(--dim);font-size:12px;margin-top:10px;cursor:pointer}
+#gateskip:hover{color:var(--txt)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--grad);box-shadow:0 0 8px rgba(139,92,246,.8);animation:pulse 2.4s infinite}
+@keyframes pulse{50%{opacity:.45}}
+/* ---------- main ---------- */
+#main{flex:1;display:flex;flex-direction:column;min-width:0;z-index:1}
+#bar{display:flex;gap:8px;padding:12px 16px;align-items:center;border-bottom:1px solid var(--line);background:rgba(7,11,18,.6);backdrop-filter:blur(14px)}
+.navbtn{width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid var(--line);
+  cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;transition:.16s;color:var(--dim)}
+.navbtn:hover{color:var(--txt);border-color:var(--line2)}
+#omnibox{flex:1;display:flex;align-items:center;gap:9px;background:rgba(255,255,255,.045);border:1px solid var(--line);
+  border-radius:12px;padding:0 8px 0 13px;transition:.18s}
+#omnibox:focus-within{border:1px solid transparent;background:linear-gradient(#0d1424,#0d1424) padding-box,var(--grad) border-box;box-shadow:0 0 0 3px rgba(139,92,246,.15)}
+#nbadge{flex:none;font-size:10px;font-weight:800;letter-spacing:.06em;background:var(--grad);border-radius:7px;padding:3px 7px;color:#fff}
+#addr{flex:1;background:none;border:0;outline:0;color:var(--txt);font:inherit;padding:9px 0}
+#addr::placeholder{color:var(--dim)}
+#splitBtn.off{opacity:.45}
+/* ---------- views ---------- */
+#views{flex:1;display:flex;min-height:0;position:relative}
+.viewwrap{flex:1;display:flex;flex-direction:column;min-width:0}
+.viewwrap+.viewwrap{border-left:1px solid var(--line)}
+iframe{flex:1;width:100%;border:0;background:#fff}
+/* start page */
+#start{flex:1;overflow-y:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:40px;text-align:center}
+#start .logo{filter:drop-shadow(0 0 26px rgba(139,92,246,.5))}
+#start h1{font-size:34px;font-weight:800;letter-spacing:.01em}
+#start h1 span{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+#start p{color:var(--dim);max-width:520px}
+#bigsearch{display:flex;align-items:center;gap:10px;width:min(560px,90%);background:rgba(255,255,255,.05);
+  border:1px solid var(--line2);border-radius:16px;padding:6px 6px 6px 18px}
+#bigsearch:focus-within{border:1px solid transparent;background:linear-gradient(#0d1424,#0d1424) padding-box,var(--grad) border-box}
+#bigsearch input{flex:1;background:none;border:0;outline:0;color:var(--txt);font-size:15px;padding:10px 0}
+#bigsearch button{background:var(--grad);border:0;border-radius:11px;color:#fff;font-weight:700;padding:11px 22px;cursor:pointer}
+.chips{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.chip{font-size:11.5px;color:var(--dim);border:1px solid var(--line);border-radius:20px;padding:5px 12px;background:rgba(255,255,255,.025)}
+.chip b{color:var(--txt)}
+#keys{font-size:11.5px;color:var(--dim)}
+kbd{background:rgba(255,255,255,.06);border:1px solid var(--line2);border-bottom-width:2px;border-radius:6px;padding:1px 7px;font-size:11px;font-family:inherit}
+/* research */
+#research{display:none;flex:1;overflow-y:auto;padding:26px 30px;max-width:880px;width:100%;margin:0 auto}
+#research.show{display:block}
+#research h2{font-size:21px;margin-bottom:4px}
+#research h2 span{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+#rmeta{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 16px;align-items:center;font-size:12px;color:var(--dim)}
+.src{border:1px solid var(--line2);border-radius:16px;padding:3px 11px;background:rgba(34,211,238,.07)}
+#pipe{display:flex;gap:0;margin-bottom:20px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:rgba(255,255,255,.02)}
+.step{flex:1;padding:10px 12px;font-size:12px;color:var(--dim);border-left:1px solid var(--line);position:relative}
+.step:first-child{border-left:0}
+.step b{display:block;color:var(--txt);font-size:12.5px}
+.step.done b::after{content:" ✓";color:#34d399}
+.step.run b::after{content:" …";color:var(--acc2)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:15px 17px;margin-bottom:12px;transition:.16s;animation:rise .35s ease backwards}
+.card:hover{border-color:var(--line2);transform:translateY(-1px)}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}}
+.card .row{display:flex;gap:12px;align-items:flex-start}
+.rank{flex:none;width:30px;height:30px;border-radius:9px;background:var(--grad);font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;color:#fff}
+.card h3{font-size:15px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;min-width:0}
+.card h3 a{color:var(--txt);text-decoration:none}
+.card h3 a:hover{text-decoration:underline;text-decoration-color:var(--acc1)}
+.card .url{font-size:11.5px;color:var(--acc2);margin:2px 0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:anywhere}
+.card p{color:#b7c1d4;font-size:13.5px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow-wrap:anywhere;min-width:0}
+.card p mark{background:rgba(139,92,246,.35);color:#fff;border-radius:4px;padding:0 3px}
+.bubble a{word-break:break-all}
+.ptable td{overflow-wrap:anywhere;word-break:break-word}
+#rmeta .src{max-width:230px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#marks{overflow-y:auto;max-height:32%;padding:2px}
+.mark{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.028);border:1px solid var(--line);
+  border-radius:10px;padding:7px 9px;margin-bottom:6px;cursor:pointer;font-size:12px;min-width:0}
+.mark:hover{border-color:var(--line2)}
+.mark span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mark .x{flex:none;border:0;background:none;color:var(--dim);cursor:pointer;font-size:12px;padding:1px 5px;border-radius:6px;opacity:0}
+.mark:hover .x{opacity:1}.mark .x:hover{color:#ff7b7b;background:rgba(255,80,80,.1)}
+.markempty{font-size:11px;color:var(--dim);padding:2px 8px}
+#recent{margin-top:2px}
+#recent .chip{cursor:pointer}
+#recent .chip:hover{border-color:var(--acc1);color:var(--txt)}
+.scorebar{height:5px;border-radius:4px;background:rgba(255,255,255,.07);margin:11px 0 8px;overflow:hidden}
+.scorebar i{display:block;height:100%;background:var(--grad);border-radius:4px}
+.detail{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--dim);align-items:center}
+.detail b{color:var(--txt);font-variant-numeric:tabular-nums}
+.srcchip{font-size:10.5px;font-weight:700;letter-spacing:.04em;border:1px solid var(--line2);border-radius:12px;padding:2px 9px;color:var(--acc2)}
+.actions{margin-left:auto;display:flex;gap:7px}
+.actions button{font-size:12px;border-radius:9px;padding:6px 13px;cursor:pointer;border:1px solid var(--line2);background:rgba(255,255,255,.04);transition:.15s}
+.actions button:hover{border-color:var(--acc1)}
+.actions button.go{background:var(--grad);border:0;color:#fff;font-weight:700}
+.skel{border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:12px;background:linear-gradient(100deg,rgba(255,255,255,.02) 40%,rgba(255,255,255,.06) 50%,rgba(255,255,255,.02) 60%);background-size:200% 100%;animation:sh 1.3s infinite}
+@keyframes sh{to{background-position:-200% 0}}
+.skel i{display:block;height:12px;border-radius:6px;background:rgba(255,255,255,.07);margin:8px 0}
+#offline{border:1px solid rgba(251,191,36,.4);background:rgba(251,191,36,.06);border-radius:var(--r);padding:16px;margin-bottom:14px;font-size:13px}
+#hint{padding:8px 18px;color:var(--dim);font-size:11.5px;border-top:1px solid var(--line);background:rgba(7,11,18,.6)}
+.hidden{display:none!important}
+/* ---------- nöral sağ panel ---------- */
+#neural{position:fixed;top:59px;right:0;bottom:29px;width:328px;z-index:5;background:rgba(11,17,28,.94);
+  backdrop-filter:blur(20px);border-left:1px solid var(--line2);padding:16px;overflow-y:auto;
+  box-shadow:-18px 0 50px rgba(0,0,0,.5);transition:transform .25s ease}
+#neural.hidden{display:block!important;transform:translateX(105%)}
+#neural h3{font-size:13px;letter-spacing:.1em;margin-bottom:2px}
+#neural h3 span{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+#neural .sub{font-size:11px;color:var(--dim);margin-bottom:10px}
+#neural svg{width:100%;height:auto;background:rgba(255,255,255,.02);border:1px solid var(--line);border-radius:12px}
+#neural .sel{font-size:12px;margin:10px 0 4px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#neural .legend{font-size:10.5px;color:var(--dim);margin-top:8px;line-height:1.7}
+#neural .legend i{display:inline-block;width:14px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
+/* ---------- test modu ---------- */
+.ptable{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:12px}
+.ptable th{text-align:left;color:var(--dim);font-weight:600;font-size:11px;padding:7px 9px;border-bottom:1px solid var(--line2)}
+.ptable td{padding:8px 9px;border-bottom:1px solid var(--line);vertical-align:top}
+.ptable tr:hover td{background:rgba(255,255,255,.02)}
+.pass{color:#34d399;font-weight:800}.fail{color:#ff7b7b;font-weight:800}
+.pill{font-size:10.5px;border:1px solid var(--line2);border-radius:12px;padding:2px 10px;color:var(--dim)}
+#testBtn{font-size:12px;border-radius:9px;padding:7px 14px;cursor:pointer;border:1px solid transparent;cursor:pointer;
+  background:linear-gradient(#141c2e,#141c2e) padding-box,var(--grad) border-box;color:#fff;font-weight:700}
+#testBtn:hover{filter:brightness(1.2)}
+.modeseg{display:inline-flex;border:1px solid var(--line2);border-radius:10px;overflow:hidden}
+.modeseg button{background:transparent;border:0;color:var(--dim);font-size:12px;padding:6px 14px;cursor:pointer}
+.modeseg button.on{background:var(--grad);color:#fff;font-weight:700}
+.copybtn{font-size:11px;border-radius:8px;padding:5px 11px;cursor:pointer;border:1px solid var(--line2);background:rgba(255,255,255,.04);transition:.15s}
+.copybtn:hover{border-color:var(--acc1)}
+</style>
+</head>
+<body>
+<aside id="side">
+  <div id="brand">
+    <svg width="34" height="34" viewBox="0 0 34 34" fill="none">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="34" y2="34"><stop stop-color="#8b5cf6"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs>
+      <circle cx="8" cy="9" r="3.4" fill="url(#g)"/><circle cx="25" cy="7" r="2.6" fill="url(#g)" opacity=".8"/>
+      <circle cx="17" cy="17" r="4" fill="url(#g)"/><circle cx="7" cy="26" r="2.6" fill="url(#g)" opacity=".8"/>
+      <circle cx="26" cy="25" r="3.4" fill="url(#g)"/>
+      <path d="M10.5 10.5 14 14.5M20 14.5l3.4-5M14.5 19.5 9 24M19.5 19.5 24 23" stroke="url(#g)" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+    <div><b>NÖRAL</b><small>araştırma tarayıcısı</small></div>
+  </div>
+  <div id="tabhead">SEKMELER <span id="tabcount"></span></div>
+  <div id="tabs"></div>
+  <button id="newtab">+ Yeni sekme</button>
+  <div id="tabhead" style="margin-top:2px"><span id="markhead">YER İMLERİ</span></div>
+  <div id="marks"></div>
+  <div id="status"><span class="dot"></span><span id="stxt">motor hazır · mlp-12-48-28-1</span></div>
+  <div id="keys"><div id="keyrow"><select id="keysvc"><option value="apinex">Apinex</option><option value="nim">NIM</option><option value="brave">Brave</option><option value="exa">Exa</option><option value="tavily">Tavily</option><option value="serper">Serper</option><option value="langsearch">LangSearch</option></select><input id="bravekey" type="password" placeholder="API anahtarı" autocomplete="off"><button id="keysave">Kaydet</button></div><div id="keystat">anahtarlar denetleniyor…</div></div>
+</aside>
+<div id="main">
+  <div id="bar">
+    <button class="navbtn" id="back" title="Geri">←</button>
+    <button class="navbtn" id="fwd" title="İleri">→</button>
+    <button class="navbtn" id="rel" title="Yenile">⟳</button>
+    <button class="navbtn" id="home" title="Başlangıç">⌂</button>
+    <div id="omnibox"><span id="nbadge">N</span><input id="addr" placeholder="URL veya araştırma sorgusu — Enter" spellcheck="false" autocomplete="off"></div>
+    <button class="navbtn off" id="splitBtn" title="Split view (Ctrl+\)">⫿</button>
+    <span class="modeseg" id="deepSeg" title="Tarama derinliği"><button data-d="0">Hızlı</button><button data-d="1" class="on">Derin</button></span>
+    <span class="modeseg" id="apxSeg" title="Apinex web indeksi"><button data-a="2">$Herzaman</button><button data-a="1" class="on">$Zayıfken</button><button data-a="0">$Kapalı</button></span>
+    <button class="navbtn off" id="hstBtn" title="Deneysel hasatçı: gizli gerçek-tarayıcıyla ekran verisi çeker (bot duvarlarını aşar)">HASAT</button>
+    <button class="navbtn" id="agentBtn" title="Agentic ajan (NIM)" style="width:auto;padding:0 12px;font-size:12px;font-weight:800">AJAN</button>
+     <button class="navbtn" id="netBtn" title="Nöral ağ paneli" style="width:auto;padding:0 12px;font-size:12px;font-weight:800;border:1px solid transparent;background:linear-gradient(#0d1424,#0d1424) padding-box,var(--grad) border-box">N-AĞ</button>
+    <button class="navbtn" id="langBtn" title="Dil / Language" style="width:auto;padding:0 12px;font-size:12px;font-weight:800">TR</button>
+  </div>
+  <div id="views">
+    <div class="viewwrap" id="wrap1">
+      <div id="start">
+        <svg class="logo" width="76" height="76" viewBox="0 0 34 34" fill="none">
+          <circle cx="8" cy="9" r="3.4" fill="url(#g)"/><circle cx="25" cy="7" r="2.6" fill="url(#g)" opacity=".8"/>
+          <circle cx="17" cy="17" r="4" fill="url(#g)"/><circle cx="7" cy="26" r="2.6" fill="url(#g)" opacity=".8"/>
+          <circle cx="26" cy="25" r="3.4" fill="url(#g)"/>
+          <path d="M10.5 10.5 14 14.5M20 14.5l3.4-5M14.5 19.5 9 24M19.5 19.5 24 23" stroke="url(#g)" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <h1>Nöral <span>araştırma</span> motoru hazır</h1>
+        <p>Üç kaynaktan canlı toplar, BM25 + kosinüs benzerliği + otorite ile skorlar, MMR ile çeşitlendirir. Her sonucun skor dökümünü kartta görürsün.</p>
+        <div id="bigsearch"><input id="bigq" placeholder="Ne araştırmak istiyorsun?" spellcheck="false" autocomplete="off"><button id="biggo">Ara</button></div>
+        <div class="chips"><span class="chip"><b>40+ kaynak</b> Wiki · GitHub · Stack · HN · npm</span><span class="chip"><b>Derin halka</b> sayfa-içi linkler</span><span class="chip"><b>MLP 12-48-28-1</b> nöral sıralayıcı</span></div>
+        <div class="chips" id="recent"></div>
+        <div id="keys"><kbd>Ctrl</kbd>+<kbd>K</kbd> adres çubuğu · <kbd>Ctrl</kbd>+<kbd>T</kbd> sekme · <kbd>Ctrl</kbd>+<kbd>\</kbd> split · <kbd>Esc</kbd> kapat</div>
+      </div>
+      <iframe id="f1" class="hidden" src="about:blank"></iframe>
+    </div>
+    <div class="viewwrap hidden" id="wrap2"><iframe id="f2" src="about:blank"></iframe></div>
+  </div>
+  <div id="research"></div>
+  <div id="agent">
+    <div id="agentbar">
+      <span class="modeseg" id="agmodes"><button data-m="arastirma" class="on">Araştırma</button><button data-m="osint">OSINT</button></span>
+      <span class="pill">nemotron-3-super · agentic</span>
+    </div>
+    <div id="amsgs"></div>
+    <div id="ainput"><input id="amsg" placeholder="Ajana sor — webde arar, sayfa okur, sekme açar" autocomplete="off" spellcheck="false"><button id="asend">Sor</button></div>
+  </div>
+  <aside id="neural" class="hidden">
+    <h3>NÖRAL <span>AĞ</span> · CANLI</h3>
+    <div class="sub" id="netArch">mlp-12-48-28-1 · 2025 parametre · tanh,tanh → sigmoid</div>
+    <div id="netsvg"></div>
+    <div class="sel" id="netsel">Sonucun üstüne gel — aktivasyonları gör.</div>
+    <div class="legend"><i style="background:#8b5cf6"></i>pozitif ağırlık &nbsp;<i style="background:#22d3ee"></i>negatif ağırlık<br>
+    parlaklık = aktivasyon · kalınlık = |ağırlık| · bu bir LLM değil, sıralayıcı MLP</div>
+  </aside>
+  <div id="hint">URL yaz → site açılır · başka bir şey yaz → nöral sıralama · sekmeye çift tık kapatır · <kbd>Ctrl</kbd>+<kbd>L</kbd> adres · <kbd>Alt</kbd>+<kbd>1..8</kbd> sekme</div>
+</div>
+<aside id="gate" class="hidden">
+  <div id="gatecard">
+    <h2>NIM anahtarı <span>gerekli</span></h2>
+    <p>Ajan modu (araştırma + OSINT) NVIDIA NIM ile çalışır. Anahtarın klasör dışına, sadece sana özel alana kaydedilir.</p>
+    <input id="gatekey" type="password" placeholder="nvapi-..." autocomplete="off">
+    <button id="gatego">Kaydet ve başla</button><br>
+    <button id="gateskip">şimdilik atla</button>
+  </div>
+</aside>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const S={tabs:[],seq:1,split:false,view:"start"};
+let NETW=null,PINNED=null,LASTREP=null;
+const FEATN=["BM25","Kosinüs","Otorite","Başlık","Kısalık","Snip","Sayfa","Derin","Tam","Soyad","Tümü","Nick"];
+let DEPTH=1;
+let APX=1;
+let HST=false;
+try{HST=localStorage.getItem("noral_harvest")==="1"}catch(e){}
+window.onerror=function(m){try{$("stxt").textContent="hata: "+String(m).slice(0,120)}catch(e){}};
+const f1=$("f1"),f2=$("f2"),res=$("research"),addr=$("addr"),start=$("start");
+const AVC=["#8b5cf6","#22d3ee","#34d399","#f59e0b","#ef4444","#3b82f6"];
+function avColor(h){let s=0;for(const c of h)s+=c.charCodeAt(0);return AVC[s%AVC.length]}
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+function looksUrl(s){s=s.trim();return /^(https?:\/\/\S+)$/i.test(s)||/^[\w-]+(\.[\w-]+)+\/?\S*$/i.test(s)&&/\.(com|net|org|io|dev|edu|gov|tr|com\.tr|app|xyz|ai|co|me)(\/|\?|$|:)/i.test(s)}
+function norm(u){return /^https?:\/\//i.test(u)?u:"https://"+u}
+function host(u){try{return new URL(u).hostname.replace(/^www\./,"")}catch(e){return u}}
+function curTab(){return S.tabs.find(t=>t.on)}
+function curTabUrl(){const t=curTab();return t?t.url:"about:blank"}
+function setView(v){S.view=v;
+  const inRes=v==="research", inStart=v==="start", inAgent=v==="agent";
+  $("views").classList.toggle("hidden",inRes||inAgent);
+  res.classList.toggle("show",inRes);
+  $("agent").classList.toggle("show",inAgent);
+  start.classList.toggle("hidden",!inStart);
+  f1.classList.toggle("hidden",inStart);
+}
+function addTab(){S.tabs.forEach(x=>x.on=false);
+  const t={id:S.seq++,url:"about:blank",title:"Yeni sekme",on:true,hist:["about:blank"],hi:0};
+  S.tabs.push(t);render();openUrl("about:blank",false);return t}
+function switchTab(t){S.tabs.forEach(x=>x.on=(x===t));render();openUrl(t.url,false)}
+function render(){
+  $("tabcount").textContent=S.tabs.length;
+  const box=$("tabs");box.innerHTML="";
+  S.tabs.forEach(t=>{const d=document.createElement("div");
+    d.className="tab"+(t.on?" on":"");d.title=t.url;
+    const h=host(t.url),ch=(t.url==="about:blank"?"✦":h[0].toUpperCase());
+    d.innerHTML='<span class="avatar" style="background:'+avColor(h)+'">'+esc(ch)+'</span><span class="tt"><div></div><small></small></span><button class="x" title="Kapat">✕</button>';
+    d.querySelector(".tt div").textContent=t.title;d.querySelector(".tt small").textContent=t.url==="about:blank"?"yeni sekme":t.url;
+    d.onclick=()=>switchTab(t);
+    d.ondblclick=e=>{e.stopPropagation();closeTab(t)};
+    d.onauxclick=e=>{if(e.button===1){e.preventDefault();closeTab(t)}};
+    d.querySelector(".x").onclick=e=>{e.stopPropagation();closeTab(t)};
+    box.appendChild(d)});
+  const b=$("back"),f=$("fwd"),t=curTab();
+  const canB=!!(t&&t.hi>0), canF=!!(t&&t.hi<t.hist.length-1);
+  b.style.opacity=canB?1:.35;f.style.opacity=canF?1:.35;
+}
+function closeTab(t){S.tabs=S.tabs.filter(x=>x!==t);
+  if(!S.tabs.length)S.tabs.push({id:S.seq++,url:"about:blank",title:"Yeni sekme",on:true,hist:["about:blank"],hi:0});
+  if(!curTab())S.tabs[S.tabs.length-1].on=true;
+  render();openUrl(curTabUrl(),false)}
+function openUrl(url,push){
+  if(push===undefined)push=true;
+  let t=curTab();
+  if(!t){S.tabs.forEach(x=>x.on=false);t={id:S.seq++,url:"about:blank",title:"Yeni sekme",on:true,hist:["about:blank"],hi:0};S.tabs.push(t)}
+  if(push){t.hist=t.hist.slice(0,t.hi+1);if(t.hist[t.hist.length-1]!==url)t.hist.push(url);t.hi=t.hist.length-1}
+  t.url=url;
+  if(/^https?:/i.test(url))t.title=host(url);else if(url==="about:blank")t.title="Yeni sekme";
+  render();addr.value=url==="about:blank"?"":url;
+  if(url==="about:blank"){setView("start");return}
+  setView("web");f1.src=url;if(S.split)f2.src=url;
+}
+function navBack(){const t=curTab();if(!t||t.hi<=0)return;t.hi--;openUrl(t.hist[t.hi],false)}
+function navFwd(){const t=curTab();if(!t||t.hi>=t.hist.length-1)return;t.hi++;openUrl(t.hist[t.hi],false)}
+function goHome(){
+  let t=curTab();
+  if(!t){t={id:S.seq++,url:"about:blank",title:"Yeni sekme",on:true,hist:["about:blank"],hi:0};S.tabs.push(t)}
+  S.tabs.forEach(x=>x.on=(x===t));
+  t.url="about:blank";t.title="Yeni sekme";t.hist=["about:blank"];t.hi=0;
+  render();addr.value="";setView("start");setTimeout(()=>{try{$("bigq").focus()}catch(e){}},60);
+}
+function doResearch(q){
+  pushRecent(q);
+  setView("research");
+  $("stxt").textContent="motor çalışıyor…";
+  res.innerHTML="<h2><span>"+esc(q)+"</span> "+T("r_searching")+"</h2><div id='rmeta'><span>"+T("r_connect")+"</span></div>"
+    +"<div id='pipe'><div class='step run'><b>"+T("p_collect")+"</b>"+T("p_collect_sub")+"</div><div class='step'><b>"+T("p_score")+"</b>"+T("p_score_sub")+"</div><div class='step'><b>"+T("p_rank")+"</b>"+T("p_rank_sub")+"</div></div>"
+    +"<div class='skel'><i style='width:60%'></i><i></i><i style='width:80%'></i></div>".repeat(2);
+  try{window.ipc.postMessage(JSON.stringify({cmd:"research",query:q,depth:DEPTH,apx:APX}))}
+  catch(e){res.innerHTML="<div id='offline'>Rust çekirdeğe ulaşılamadı.</div>"}
+}
+let lastTerms=[];
+let MODE="klasik";
+function mkey(r){return ((MODE==="noral"?r.detail.neural:r.detail.classic_norm)*r.detail.mmr_penalty)}
+function sendClick(r,above){
+  try{window.ipc.postMessage(JSON.stringify({cmd:"click",feats:r.feats,
+    skipped:above.slice(-3).map(x=>x.feats)}))}catch(e){}
+}
+window.__noralPush=function(rep){
+  if(!rep||!rep.results){res.innerHTML="<div id='offline'>Boş yanıt.</div>";return}
+  LASTREP=rep;PINNED=null;NETW=rep.net||null;window.__inTest=false;
+  $("stxt").dataset.live="1";
+  $("stxt").textContent="model v"+rep.model.version+" · "+rep.model.clicks+" "+T("st_clicks")+" · "+(MODE==="noral"?T("st_neural"):T("st_classic"))+(rep.depth===1?" · "+T("st_deep"):"");
+  if(NETW)$("netArch").textContent=NETW.arch+" · "+NETW.params+" parametre · tanh → sigmoid";
+  lastTerms=rep.query.toLowerCase().split(/[^a-zçğıöşü0-9]+/i).filter(s=>s.length>2);
+  rep.results.sort((a,b)=>mkey(b)-mkey(a));
+  const dmax=Math.max.apply(null,rep.results.map(mkey).concat([0.001]));
+  const off=rep.sources.length===1&&rep.sources[0]==="çevrimdışı-yedek";
+  let h="<h2>"+rep.results.length+" "+T("m_results")+" · <span>"+esc(rep.query)+"</span></h2><div id='rmeta'>"
+    +"<button id='testBtn'>"+T("m_test")+"</button>"
+    +"<span class='modeseg'><button data-m='klasik' class='"+(MODE==="klasik"?"on":"")+"'>"+T("mode_klasik")+"</button><button data-m='noral' class='"+(MODE==="noral"?"on":"")+"'>"+T("mode_noral")+"</button></span>"
+    +rep.sources.map(s=>"<span class='src'>"+esc(s)+"</span>").join("")
+    +"<span>"+rep.candidates+" "+T("m_candidates")+"</span><span>"+rep.elapsed_ms+" ms</span>"
+    +"<span class='pill'>"+(rep.depth===1?T("m_deep"):T("m_fast"))+"</span>"
+    +"<span class='pill'>"+(rep.cached?"önbellek · ücretsiz":(rep.cost_usd>0?"~$"+rep.cost_usd:T("m_free")))+"</span>"
+    +"<span class='pill'>model v"+rep.model.version+" · "+rep.model.clicks+" "+T("m_clicks")+"</span>"
+    +(rep.silent||[]).map(s=>"<span class='src' style='opacity:.4' title='"+T("card_nores")+"'>"+esc(s)+"</span>").join("")+"</div>"
+    +"<div id='pipe'><div class='step done'><b>"+T("p_collect")+"</b>"+rep.candidates+" "+T("m_candidates")+" · "+rep.sources.length+" "+(LANG==="tr"?"kaynak":"sources")+"</div>"
+    +"<div class='step done'><b>"+T("p_score")+"</b>"+T("p_score_sub")+"</div>"
+    +"<div class='step done'><b>"+T("p_rank")+"</b>"+T("p_rank_sub")+"</div></div>";
+  if(off)h+="<div id='offline'>"+T("off_title")+"</div>";
+  h+=rep.results.map((r,i)=>{
+    const w=Math.max(3,Math.round(mkey(r)/dmax*100));
+    return "<div class='card' data-i='"+i+"' style='animation-delay:"+(i*0.05)+"s'><div class='row'><div class='rank'>"+(i+1)+"</div><div style='flex:1;min-width:0'>"
+    +"<h3><a href='#' data-u=\""+esc(r.url)+"\">"+hl(r.title)+"</a></h3>"
+    +"<div class='url'>"+esc(r.url)+"</div><p>"+hl(r.snippet||T("card_nodesc"))+"</p>"
+    +"<div class='scorebar'><i style='width:"+w+"%'></i></div>"
+    +"<div class='detail'><span class='srcchip'>"+esc(r.source)+"</span><span>skor <b>"+mkey(r).toFixed(2)+"</b></span>"
+    +"<span style='color:#c4b5fd'>nöral <b>"+r.detail.neural+"</b></span>"
+    +"<span>klasik <b>"+r.detail.classic_norm+"</b></span>"
+    +"<span>BM25 <b>"+r.detail.bm25+"</b></span><span>kosinüs <b>"+r.detail.cosine+"</b></span>"
+    +"<span>otorite <b>"+r.detail.authority+"</b></span>"+(r.detail.mmr_penalty<1?"<span>MMR <b>×"+r.detail.mmr_penalty+"</b></span>":"")
+     +"<span class='actions'><button class='copybtn' data-c='"+i+"'>"+T("card_copy")+"</button><button class='copybtn' data-b='"+i+"'>★</button><button class='go' data-u=\""+esc(r.url)+"\" data-i='"+i+"'>"+T("card_open")+"</button></span></div>"
+    +"</div></div></div>"}).join("");
+  res.innerHTML=h;
+  res.querySelectorAll("[data-u]").forEach(a=>a.onclick=e=>{e.preventDefault();e.stopPropagation();
+    const card=a.closest(".card"), i=card?+card.getAttribute("data-i"):0, r=rep.results[i];
+    if(r)sendClick(r,rep.results.slice(0,i));
+    window.__noralOpen(a.getAttribute("data-u"))});
+  res.querySelectorAll("[data-b]").forEach(b=>b.onclick=e=>{e.stopPropagation();
+    const r=rep.results[+b.getAttribute("data-b")];if(!r)return;
+    const m=getMarks();if(!m.some(k=>k.u===r.url))m.unshift({t:r.title,u:r.url,s:r.source});
+    setMarks(m);renderMarks();try{$("stxt").textContent=T("marked")}catch(_){}});
+  $("testBtn").onclick=()=>{try{window.ipc.postMessage(JSON.stringify({cmd:"testmode"}))}catch(e){}};
+  res.querySelectorAll("[data-c]").forEach(b=>b.onclick=e=>{e.stopPropagation();
+    const r=rep.results[+b.getAttribute("data-c")];
+    if(r)copyText(r.title+"\n"+r.url+"\n"+(r.snippet||""))});
+  res.querySelectorAll(".modeseg button").forEach(b=>b.onclick=()=>{MODE=b.getAttribute("data-m");
+    try{localStorage.setItem("noral_mode",MODE)}catch(e){}
+    if(LASTREP)window.__noralPush(LASTREP)});
+  res.querySelectorAll(".card").forEach(c=>{const i=+c.getAttribute("data-i");const r=rep.results[i];
+    c.onmouseenter=()=>{if(PINNED==null)drawNet(r)};
+    c.onclick=()=>{PINNED=i;drawNet(r)};
+  });
+  if(rep.results[0]&&PINNED==null)drawNet(rep.results[0]);
+};
+/* ---- sağ panel: ağı çiz (girdi → gizli2 birleşik izdüşüm + çıkış) ---- */
+function drawNet(r){
+  if(!NETW||!r)return;
+  const nin=r.feats.length, nh=r.hidden.length;
+  const H1=NETW.w1.length/nin, nk=NETW.w2.length/nh;
+  const rowH=Math.max(14,Math.min(36,640/Math.max(nin,nh)));
+  const W=296,H=110+Math.max(nin,nh)*rowH;
+  const X0=36,X1=160,X2=266;
+  const span=H-90, y0=i=>45+i*(nin>1?span/(nin-1):0), y1=h=>45+h*(nh>1?span/(nh-1):0), yo=H/2;
+  // Birleşik ağırlık: E = w1·w2 (iki katman tek bakışta)
+  let mx1=0.0001;const E=[];
+  for(let i=0;i<nin;i++){E.push([]);for(let j=0;j<nh;j++){let s=0;
+    for(let k=0;k<nk;k++)s+=NETW.w1[i*H1+k]*NETW.w2[k*nh+j];
+    E[i].push(s);mx1=Math.max(mx1,Math.abs(s))}}
+  let mx2=0.0001;NETW.w3.forEach(w=>{mx2=Math.max(mx2,Math.abs(w))});
+  let s="";
+  for(let i=0;i<nin;i++)for(let j=0;j<nh;j++){const w=E[i][j];
+    s+="<line x1='"+X0+"' y1='"+y0(i)+"' x2='"+X1+"' y2='"+y1(j)+"' stroke='"+(w>0?"#8b5cf6":"#22d3ee")
+      +"' stroke-width='"+(0.5+2.2*Math.abs(w)/mx1).toFixed(2)+"' opacity='"+(0.06+0.55*r.feats[i]*Math.abs(w)/mx1).toFixed(2)+"'/>"}
+  for(let j=0;j<nh;j++){const w=NETW.w3[j],a=(r.hidden[j]+1)/2;
+    s+="<line x1='"+X1+"' y1='"+y1(j)+"' x2='"+X2+"' y2='"+yo+"' stroke='"+(w>0?"#8b5cf6":"#22d3ee")
+      +"' stroke-width='"+(0.5+2.2*Math.abs(w)/mx2).toFixed(2)+"' opacity='"+(0.06+0.6*a*Math.abs(w)/mx2).toFixed(2)+"'/>"}
+  for(let i=0;i<nin;i++){const a=r.feats[i];
+    s+="<circle cx='"+X0+"' cy='"+y0(i)+"' r='"+(7+4*a).toFixed(1)+"' fill='#8b5cf6' opacity='"+(0.3+0.7*a).toFixed(2)+"'/>"
+      +"<text x='"+(X0-16)+"' y='"+(y0(i)+3.5)+"' fill='#8b96ab' font-size='8.5' text-anchor='end'>"+(FEATN[i]||("g"+i))+"</text>"
+      +"<text x='"+(X0+14)+"' y='"+(y0(i)+3.5)+"' fill='#e9eff8' font-size='8.5'>"+a.toFixed(2)+"</text>"}
+  for(let j=0;j<nh;j++){const a=(r.hidden[j]+1)/2;
+    s+="<circle cx='"+X1+"' cy='"+y1(j)+"' r='"+(5.5+4*a).toFixed(1)+"' fill='#22d3ee' opacity='"+(0.25+0.75*a).toFixed(2)+"'/>"}
+  const o=r.detail.neural;
+  s+="<circle cx='"+X2+"' cy='"+yo+"' r='"+(10+6*o).toFixed(1)+"' fill='url(#ng)'/>"
+    +"<text x='"+X2+"' y='"+(yo+32)+"' fill='#e9eff8' font-size='13' font-weight='800' text-anchor='middle'>"+o.toFixed(2)+"</text>"
+    +"<text x='"+X2+"' y='"+(yo+46)+"' fill='#8b96ab' font-size='9' text-anchor='middle'>nöral skor</text>";
+  $("netsvg").innerHTML="<svg viewBox='0 0 "+W+" "+H+"'><defs><linearGradient id='ng' x1='0' y1='0' x2='1' y2='1'>"
+    +"<stop stop-color='#8b5cf6'/><stop offset='1' stop-color='#22d3ee'/></linearGradient></defs>"+s+"</svg>";
+  $("netsel").textContent="→ "+r.title.slice(0,60);
+  $("netsel").dataset.live="1";
+}
+/* ---- test modu ---- */
+window.__noralTest=function(d){
+  if(!d||!d.probes){return}
+  window.__inTest=true;window.__lastTest=d;
+  NETW=d.net||NETW;
+  const tr=d.training||{};
+  let h="<h2>"+T("test_h")+" · <span>"+esc(d.arch||"")+"</span></h2><div id='rmeta'>"
+    +"<span class='pill'>"+(d.params||"?")+" parametre</span><span class='pill'>tanh → sigmoid</span>"
+    +"<span class='pill'>deterministik · offline</span>"
+    +"<span class='pill'>eğitim: "+(tr.base_pairs||"?")+" çift × "+(tr.base_epochs||"?")+" epoch</span>"
+    +"<span class='pill'>model v"+(tr.version||"?")+" · "+(tr.clicks||0)+" "+T("st_clicks")+"</span>"
+    +"<span class='pill'>prob "+(tr.passed||"?")+"/"+d.probes.length+"</span>"
+    +"<button id='testBtn' onclick='window.__noralPush(LASTREP)'>"+T("test_back")+"</button></div>"
+    +"<p style='color:var(--dim);font-size:13px;max-width:640px'>"+T("test_p1")+"</p>"
+    +"<table class='ptable'><tr><th>Prob</th><th>Girdiler [bm25, cos, auth, başlık, kısa, snip, sayfa, derin, tam, soyad, tümü, nick]</th><th>Çıktı</th><th>Beklenti</th><th></th></tr>"
+    +d.probes.map(p=>"<tr><td><b>"+esc(p.name)+"</b></td><td style='font-variant-numeric:tabular-nums'>["+p.feats.map(f=>f.toFixed(2)).join(", ")+"]</td>"
+      +"<td><b>"+p.output.toFixed(3)+"</b></td><td style='color:var(--dim)'>"+esc(p.expect)+"</td>"
+      +"<td class='"+(p.pass?"pass":"fail")+"'>"+(p.pass?"PASS":"FAIL")+"</td></tr>").join("")+"</table>";
+  res.innerHTML=h;
+};
+$("netBtn").onclick=()=>$("neural").classList.toggle("hidden");
+$("agentBtn").onclick=()=>setView("agent");
+/* ---- ajan sohbet ---- */
+let AGMODE="arastirma",AGHIST=[],AGBUSY=false,GATESKIP=false;
+document.querySelectorAll("#agmodes button").forEach(b=>b.onclick=()=>{
+  AGMODE=b.getAttribute("data-m");
+  document.querySelectorAll("#agmodes button").forEach(x=>x.classList.toggle("on",x===b));
+  try{localStorage.setItem("noral_agmode",AGMODE)}catch(e){}
+});
+function linkify(s){return esc(s).replace(/(https?:\/\/[^\s<)"']+)/g,"<a href='#' data-open='$1'>$1</a>").replace(/\n/g,"<br>")}
+function addBubble(who,html){const d=document.createElement("div");d.className="bubble "+who;d.innerHTML=html;
+  $("amsgs").appendChild(d);$("amsgs").scrollTop=$("amsgs").scrollHeight;
+  d.querySelectorAll("[data-open]").forEach(a=>a.onclick=e=>{e.preventDefault();window.__noralOpen(a.getAttribute("data-open"))});
+  return d}
+function agentSend(){const v=$("amsg").value.trim();if(!v||AGBUSY)return;AGBUSY=true;
+  addBubble("user",esc(v));$("amsg").value="";
+  const hist=AGHIST.slice(-12);
+  AGHIST.push({role:"user",content:v});
+  addBubble("assistant","<span class='stepchip' id='agrun'>"+T("ag_run")+"</span>");
+  try{window.ipc.postMessage(JSON.stringify({cmd:"agent",message:v,mode:AGMODE,apx:APX,harvest:HST,history:hist}))}catch(e){AGBUSY=false}}
+$("asend").onclick=agentSend;
+$("amsg").addEventListener("keydown",e=>{if(e.key==="Enter")agentSend()});
+window.__noralAgentProgress=function(d){if(!d)return;const r=$("agrun");
+  const chip="<span class='stepchip'>"+(d.step||"?")+". "+esc(d.tool||"")+" "+esc(d.args||"")+"</span>";
+  if(r)r.outerHTML="<div class='steps' id='agsteps'>"+chip+"</div>";
+  else{const s=$("agsteps");if(s)s.innerHTML+=chip}};
+window.__noralAgentResult=function(d){AGBUSY=false;if(!d)return;
+  const box=$("agrun")?$("agrun").closest(".bubble"):null;if(box)box.remove();
+  const steps=(d.steps||[]).map(s=>"<span class='stepchip'>"+esc(s.tool)+" ✓</span>").join("");
+  addBubble("assistant","<div class='steps'>"+steps+"</div><div>"+linkify(d.answer||T("ag_empty"))+"</div><div style='margin-top:8px;font-size:11px;color:var(--dim)'>"+esc(d.model||"")+" · "+esc(d.mode||"")+(d.cost_usd>0?" · ~$"+d.cost_usd:" · "+T("ag_free"))+" <button class='copybtn'>"+T("card_copy")+"</button></div>");
+  const last=$("amsgs").lastChild;if(last){const cb=last.querySelector(".copybtn");if(cb)cb.onclick=()=>copyText(d.answer||"");}
+  AGHIST.push({role:"assistant",content:d.answer||""});
+  if(d.evidence&&d.evidence.length)AGHIST.push({role:"user",content:"[ÖNCEKİ TUR BULGULARI — tekrar arama, üzerine inşa et]\n"+d.evidence.slice(0,8).join("\n")});
+  if(AGHIST.length>24)AGHIST=AGHIST.slice(-24);
+  if(d.need_key){GATESKIP=false;$("gate").classList.remove("hidden")}};
+window.__noralOpen=function(u){if(!u)return;u=String(u).trim();if(!u)return;
+  let t=curTab();if(!t||t.url!=="about:blank")t=addTab();
+  openUrl(u);try{f1.focus()}catch(e){}};
+/* ---- giriş kapısı ---- */
+$("gatego").onclick=()=>{const v=$("gatekey").value.trim();if(!v)return;
+  try{window.ipc.postMessage(JSON.stringify({cmd:"savekey",service:"nim",key:v}))}catch(e){}
+  $("gatekey").value="";GATESKIP=true;$("gate").classList.add("hidden")};
+$("gateskip").onclick=()=>{GATESKIP=true;$("gate").classList.add("hidden")};
+$("keysave").onclick=()=>{const v=$("bravekey").value.trim();if(!v)return;
+  try{window.ipc.postMessage(JSON.stringify({cmd:"savekey",service:$("keysvc").value,key:v}))}catch(e){}
+  $("bravekey").value="";$("keystat").textContent="kaydediliyor…"};
+window.__noralKeys=function(d){if(!d)return;
+  const on=[];for(const k of ["apinex","brave","exa","tavily","serper","langsearch"])if(d[k])on.push(k);
+  let t=(on.length?on.join("+")+" "+T("key_on"):T("key_off"))+(d.saved?" · "+T("key_saved"):"");
+  if(d.nim)t+=" · NIM "+T("key_on");$("keystat").textContent=t;
+  $("keystat").style.color=(on.length||d.nim)?"#34d399":"var(--dim)";
+  if(!d.nim&&!GATESKIP)$("gate").classList.remove("hidden")};
+try{window.ipc.postMessage(JSON.stringify({cmd:"keystatus"}))}catch(e){}
+document.querySelectorAll("#deepSeg button").forEach(b=>b.onclick=()=>{
+  DEPTH=+b.getAttribute("data-d");
+  document.querySelectorAll("#deepSeg button").forEach(x=>x.classList.toggle("on",x===b));
+  try{localStorage.setItem("noral_depth",String(DEPTH))}catch(e){}
+});
+document.querySelectorAll("#apxSeg button").forEach(b=>b.onclick=()=>{
+  APX=+b.getAttribute("data-a");
+  document.querySelectorAll("#apxSeg button").forEach(x=>x.classList.toggle("on",x===b));
+  try{localStorage.setItem("noral_apx",String(APX))}catch(e){}
+});
+function syncHst(){$("hstBtn").classList.toggle("off",!HST)}
+syncHst();
+$("hstBtn").onclick=()=>{HST=!HST;syncHst();
+  try{localStorage.setItem("noral_harvest",HST?"1":"0")}catch(e){}};
+function hl(s){let o=esc(s);for(const t of lastTerms){try{o=o.replace(new RegExp("("+t.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+")","ig"),"<mark>$1</mark>")}catch(e){}}return o}
+function copyText(t){t=String(t==null?"":t);
+  const ok=()=>{try{$("stxt").textContent=T("copied")}catch(e){}};
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(ok,()=>fallbackCopy(t,ok))}
+  else fallbackCopy(t,ok)}
+function fallbackCopy(t,ok){try{const ta=document.createElement("textarea");ta.value=t;ta.style.position="fixed";ta.style.opacity="0";
+  document.body.appendChild(ta);ta.select();document.execCommand("copy");ta.remove();ok()}catch(e){}}
+function submitAddr(){const v=addr.value.trim();if(!v)return;
+  if(looksUrl(v)){let t=curTab();if(!t||t.url!=="about:blank")t=addTab();openUrl(norm(v))}else doResearch(v)}
+addr.addEventListener("keydown",e=>{if(e.key==="Enter")submitAddr();if(e.key==="Escape"&&S.view==="research")openUrl(curTabUrl(),false)});
+$("biggo").onclick=()=>{const v=$("bigq").value.trim();if(v)doResearch(v)};
+$("bigq").addEventListener("keydown",e=>{if(e.key==="Enter")$("biggo").click()});
+$("back").onclick=navBack;
+$("fwd").onclick=navFwd;
+$("rel").onclick=()=>{const t=curTab();if(t&&t.url!=="about:blank"&&S.view!=="research"){f1.src=t.url;if(S.split)f2.src=t.url}};
+$("home").onclick=goHome;
+$("newtab").onclick=()=>addTab();
+$("splitBtn").onclick=e=>{S.split=!S.split;e.currentTarget.classList.toggle("off",!S.split);
+  $("wrap2").classList.toggle("hidden",!S.split);if(S.split)f2.src=f1.src};
+document.addEventListener("keydown",e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();addr.focus();addr.select()}
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="l"){e.preventDefault();addr.focus();addr.select()}
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="t"){e.preventDefault();addTab()}
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="w"){e.preventDefault();const t=curTab();if(t)closeTab(t)}
+  if((e.ctrlKey||e.metaKey)&&e.key==="\\"){e.preventDefault();$("splitBtn").click()}
+  if(e.altKey&&e.key==="ArrowLeft"){e.preventDefault();navBack()}
+  if(e.altKey&&e.key==="ArrowRight"){e.preventDefault();navFwd()}
+  if(e.altKey&&e.key>="1"&&e.key<="8"){e.preventDefault();const t=S.tabs[+e.key-1];if(t)switchTab(t)}});
+try{const m=localStorage.getItem("noral_mode");if(m==="klasik"||m==="noral")MODE=m}catch(e){}
+try{const d=localStorage.getItem("noral_depth");if(d==="0"||d==="1")DEPTH=+d}catch(e){}
+try{const a=localStorage.getItem("noral_apx");if(a==="0"||a==="1"||a==="2")APX=+a}catch(e){}
+try{const g=localStorage.getItem("noral_agmode");if(g==="arastirma"||g==="osint")AGMODE=g}catch(e){}
+document.querySelectorAll("#deepSeg button").forEach(x=>x.classList.toggle("on",+x.getAttribute("data-d")===DEPTH));
+document.querySelectorAll("#apxSeg button").forEach(x=>x.classList.toggle("on",+x.getAttribute("data-a")===APX));
+document.querySelectorAll("#agmodes button").forEach(x=>x.classList.toggle("on",x.getAttribute("data-m")===AGMODE));
+/* ---------- i18n (TR/EN, otomatik sistem dili) ---------- */
+const STR={
+tr:{brand_sub:"araştırma tarayıcısı",tabhead:"SEKMELER",newtab:"+ Yeni sekme",marks:"YER İMLERİ",mark_empty:"henüz im yok — karttaki ★ ile ekle",
+keysave:"Kaydet",key_ph:"API anahtarı",key_check:"anahtarlar denetleniyor…",key_on:"açık",key_off:"hepsi kapalı — anahtar gerekli",key_saved:"kaydedildi",
+t_back:"Geri",t_fwd:"İleri",t_rel:"Yenile",t_home:"Başlangıç",t_split:"Split view (Ctrl+\\)",addr_ph:"URL veya araştırma sorgusu — Enter",
+hizli:"Hızlı",derin:"Derin",apx2:"$Herzaman",apx1:"$Zayıfken",apx0:"$Kapalı",hst:"HASAT",
+hst_t:"Deneysel hasatçı: gizli gerçek-tarayıcıyla ekran verisi çeker (bot duvarlarını aşar)",agent:"AJAN",agent_t:"Agentic ajan (NIM)",net:"N-AĞ",net_t:"Nöral ağ paneli",
+start_h1:"Nöral <span>araştırma</span> motoru hazır",
+start_p:"40+ kaynaktan canlı toplar, BM25 + kosinüs + otorite ile skorlar, MMR ile çeşitlendirir. Her sonucun skor dökümünü kartta görürsün.",
+big_ph:"Ne araştırmak istiyorsun?",big_go:"Ara",
+chip1:"<b>40+ kaynak</b> Wiki · GitHub · Stack · HN · npm",chip2:"<b>Derin halka</b> sayfa-içi linkler",chip3:"<b>MLP 12-48-28-1</b> nöral sıralayıcı",
+hint:"URL yaz → site açılır · başka bir şey yaz → nöral sıralama · sekmeye çift tık kapatır · <kbd>Ctrl</kbd>+<kbd>L</kbd> adres · <kbd>Alt</kbd>+<kbd>1..8</kbd> sekme",
+r_searching:"araştırılıyor",r_connect:"canlı kaynaklara bağlanılıyor…",
+p_collect:"Toplama",p_collect_sub:"40+ canlı kaynak",p_score:"Skorlama",p_score_sub:"BM25 + kosinüs + otorite",p_rank:"Sıralama",p_rank_sub:"MMR çeşitlilik",
+m_results:"sonuç",m_candidates:"aday",m_deep:"2 halka derin",m_fast:"hızlı",m_free:"ücretsiz",m_clicks:"tıkla eğitildi",m_test:"Ağ Test Modu",
+card_open:"Aç",card_copy:"Kopyala",card_nodesc:"Açıklama yok — sayfayı açıp bakmaya değer.",card_nores:"sonuç vermedi",
+off_title:"Çevrimdışı: internete ulaşılamadı, yer tutucu sonuç gösteriliyor. Bağlantını kontrol edip tekrar dene.",
+mode_klasik:"Klasik",mode_noral:"Nöral AI",st_clicks:"tıklama",st_classic:"klasik mod",st_neural:"nöral mod",st_deep:"derin",st_ready:"motor hazır",
+test_h:"Ağ Test Modu",test_back:"Sonuçlara dön",
+test_p1:"Bu ağ 12 özellikle çalışır ve açılışta gömülü tercih çiftiyle eğitildi (pairwise lojistik, backprop). Her tıklaman modeli günceller: tıklanan sonuç, atladıklarının önüne itilir. Bu bir LLM değil; öğrenen sıralayıcı MLP.",
+ag_ar:"Araştırma",ag_os:"OSINT",ag_ph:"Ajana sor — webde arar, sayfa okur, sekme açar",ag_send:"Sor",ag_run:"ajan çalışıyor…",ag_free:"ücretsiz hat",ag_empty:"(boş yanıt)",
+gate_h:"NIM anahtarı <span>gerekli</span>",gate_p:"Ajan modu (araştırma + OSINT) NVIDIA NIM ile çalışır. Anahtarın klasör dışına, sadece sana özel alana kaydedilir.",
+gate_ph:"nvapi-...",gate_go:"Kaydet ve başla",gate_skip:"şimdilik atla",
+neural_h:"NÖRAL <span>AĞ</span> · CANLI",neural_leg:"<i style=\"background:#8b5cf6\"></i>pozitif ağırlık &nbsp;<i style=\"background:#22d3ee\"></i>negatif ağırlık<br>parlaklık = aktivasyon · kalınlık = |ağırlık| · bu bir LLM değil, sıralayıcı MLP",
+neural_sel:"Sonucun üstüne gel — aktivasyonları gör.",
+copied:"panoya kopyalandı",marked:"imlere eklendi ★",unmarked:"im silindi"},
+en:{brand_sub:"research browser",tabhead:"TABS",newtab:"+ New tab",marks:"BOOKMARKS",mark_empty:"no bookmarks yet — add with ★ on cards",
+keysave:"Save",key_ph:"API key",key_check:"checking keys…",key_on:"on",key_off:"all off — key required",key_saved:"saved",
+t_back:"Back",t_fwd:"Forward",t_rel:"Reload",t_home:"Home",t_split:"Split view (Ctrl+\\)",addr_ph:"URL or research query — Enter",
+hizli:"Fast",derin:"Deep",apx2:"$Always",apx1:"$IfWeak",apx0:"$Off",hst:"HARVEST",
+hst_t:"Experimental harvester: pulls rendered data with a hidden real browser (beats bot walls)",agent:"AGENT",agent_t:"Agentic agent (NIM)",net:"N-NET",net_t:"Neural net panel",
+start_h1:"Neural <span>research</span> engine ready",
+start_p:"Collects live from 40+ sources, scores with BM25 + cosine + authority, diversifies with MMR. Every card shows its score breakdown.",
+big_ph:"What do you want to research?",big_go:"Go",
+chip1:"<b>40+ sources</b> Wiki · GitHub · Stack · HN · npm",chip2:"<b>Deep ring</b> in-page links",chip3:"<b>MLP 12-48-28-1</b> neural ranker",
+hint:"Type URL → open site · anything else → neural ranking · double-click tab closes · <kbd>Ctrl</kbd>+<kbd>L</kbd> address · <kbd>Alt</kbd>+<kbd>1..8</kbd> tabs",
+r_searching:"researching",r_connect:"connecting to live sources…",
+p_collect:"Collect",p_collect_sub:"40+ live sources",p_score:"Score",p_score_sub:"BM25 + cosine + authority",p_rank:"Rank",p_rank_sub:"MMR diversity",
+m_results:"results",m_candidates:"candidates",m_deep:"2-ring deep",m_fast:"fast",m_free:"free",m_clicks:"click-trained",m_test:"Net Test Mode",
+card_open:"Open",card_copy:"Copy",card_nodesc:"No description — worth opening.",card_nores:"no results",
+off_title:"Offline: no internet reach, showing placeholder results. Check connection and retry.",
+mode_klasik:"Classic",mode_noral:"Neural AI",st_clicks:"clicks",st_classic:"classic mode",st_neural:"neural mode",st_deep:"deep",st_ready:"engine ready",
+test_h:"Net Test Mode",test_back:"Back to results",
+test_p1:"This net runs on 12 features, trained at boot on embedded preference pairs (pairwise logistic, backprop). Every click updates it: the clicked result is pushed past the ones you skipped. Not an LLM — a learning ranking MLP.",
+ag_ar:"Research",ag_os:"OSINT",ag_ph:"Ask the agent — searches web, reads pages, opens tabs",ag_send:"Ask",ag_run:"agent working…",ag_free:"free lane",ag_empty:"(empty answer)",
+gate_h:"NIM key <span>required</span>",gate_p:"Agent mode (research + OSINT) runs on NVIDIA NIM. Your key is stored outside the folder, only for you.",
+gate_ph:"nvapi-...",gate_go:"Save and start",gate_skip:"skip for now",
+neural_h:"NEURAL <span>NET</span> · LIVE",neural_leg:"<i style=\"background:#8b5cf6\"></i>positive weight &nbsp;<i style=\"background:#22d3ee\"></i>negative weight<br>brightness = activation · width = |weight| · not an LLM, a ranking MLP",
+neural_sel:"Hover a result — see activations.",
+copied:"copied to clipboard",marked:"bookmarked ★",unmarked:"bookmark removed"}};
+let LANG="tr";
+try{const l=localStorage.getItem("noral_lang");
+  if(l==="tr"||l==="en")LANG=l;
+  else LANG=(navigator.language||"tr").toLowerCase().startsWith("tr")?"tr":"en";
+}catch(e){}
+function T(k){return (STR[LANG]&&STR[LANG][k]!==undefined)?STR[LANG][k]:(STR.tr[k]!==undefined?STR.tr[k]:k)}
+/* ---------- yer imleri + son aramalar ---------- */
+function getMarks(){try{return JSON.parse(localStorage.getItem("noral_marks")||"[]")}catch(e){return[]}}
+function setMarks(m){try{localStorage.setItem("noral_marks",JSON.stringify(m.slice(0,100)))}catch(e){}}
+function renderMarks(){const box=$("marks");if(!box)return;box.innerHTML="";
+  const m=getMarks();
+  if(!m.length){const d=document.createElement("div");d.className="markempty";d.textContent=T("mark_empty");box.appendChild(d);return}
+  m.forEach((k,i)=>{const d=document.createElement("div");d.className="mark";d.title=k.u;
+    const s=document.createElement("span");s.textContent=k.t||k.u;d.appendChild(s);
+    const x=document.createElement("button");x.className="x";x.textContent="✕";
+    x.onclick=e=>{e.stopPropagation();const a=getMarks();a.splice(i,1);setMarks(a);renderMarks();
+      try{$("stxt").textContent=T("unmarked")}catch(_){}};
+    d.appendChild(x);d.onclick=()=>window.__noralOpen(k.u);box.appendChild(d)});}
+function getRecent(){try{return JSON.parse(localStorage.getItem("noral_recent")||"[]")}catch(e){return[]}}
+function pushRecent(q){q=String(q||"").trim();if(!q)return;
+  try{const r=getRecent().filter(x=>x!==q);r.unshift(q);localStorage.setItem("noral_recent",JSON.stringify(r.slice(0,8)))}catch(e){}
+  renderRecent();}
+function renderRecent(){const box=$("recent");if(!box)return;box.innerHTML="";
+  getRecent().slice(0,8).forEach(q=>{const c=document.createElement("span");c.className="chip";c.textContent="↻ "+q;
+    c.onclick=()=>doResearch(q);box.appendChild(c)});}
+function applyLang(){
+  document.documentElement.lang=LANG;
+  $("langBtn").textContent=LANG==="tr"?"TR":"EN";
+  $("brand").querySelector("small").textContent=T("brand_sub");
+  const th=$("tabhead").childNodes;for(const n of th){if(n.nodeType===3){n.textContent=T("tabhead")+" ";break}}
+  $("markhead").textContent=T("marks");
+  $("newtab").textContent=T("newtab");
+  $("keysave").textContent=T("keysave");
+  $("bravekey").placeholder=T("key_ph");
+  $("back").title=T("t_back");$("fwd").title=T("t_fwd");$("rel").title=T("t_rel");$("home").title=T("t_home");
+  $("splitBtn").title=T("t_split");$("hstBtn").title=T("hst_t");$("agentBtn").title=T("agent_t");$("netBtn").title=T("net_t");
+  $("addr").placeholder=T("addr_ph");
+  const ds=document.querySelectorAll("#deepSeg button");if(ds[0])ds[0].textContent=T("hizli");if(ds[1])ds[1].textContent=T("derin");
+  const as2=document.querySelectorAll("#apxSeg button");if(as2[0])as2[0].textContent=T("apx2");if(as2[1])as2[1].textContent=T("apx1");if(as2[2])as2[2].textContent=T("apx0");
+  $("hstBtn").textContent=T("hst");$("agentBtn").textContent=T("agent");$("netBtn").textContent=T("net");
+  $("start").querySelector("h1").innerHTML=T("start_h1");
+  $("start").querySelector("p").textContent=T("start_p");
+  $("bigq").placeholder=T("big_ph");$("biggo").textContent=T("big_go");
+  const chips=document.querySelectorAll("#start .chips:not(#recent) span");
+  if(chips[0])chips[0].innerHTML=T("chip1");if(chips[1])chips[1].innerHTML=T("chip2");if(chips[2])chips[2].innerHTML=T("chip3");
+  const kl=document.querySelectorAll("#keys");if(kl[1])kl[1].innerHTML=T("hint");
+  $("hint").innerHTML=T("hint");
+  const am=document.querySelectorAll("#agmodes button");if(am[0])am[0].textContent=T("ag_ar");if(am[1])am[1].textContent=T("ag_os");
+  $("amsg").placeholder=T("ag_ph");$("asend").textContent=T("ag_send");
+  const nh=document.querySelector("#neural h3");if(nh)nh.innerHTML=T("neural_h");
+  const nl=document.querySelector("#neural .legend");if(nl)nl.innerHTML=T("neural_leg");
+  const nsel=$("netsel");if(nsel&&!nsel.dataset.live)nsel.textContent=T("neural_sel");
+  if(!$("stxt").dataset.live)$("stxt").textContent=T("st_ready");
+  const gh=document.querySelector("#gatecard h2");if(gh)gh.innerHTML=T("gate_h");
+  const gp=document.querySelector("#gatecard p");if(gp)gp.textContent=T("gate_p");
+  $("gatekey").placeholder=T("gate_ph");$("gatego").textContent=T("gate_go");$("gateskip").textContent=T("gate_skip");
+  renderMarks();renderRecent();
+  if(window.__inTest&&window.__lastTest)window.__noralTest(window.__lastTest);
+  else if(LASTREP&&S.view==="research")window.__noralPush(LASTREP);
+}
+$("langBtn").onclick=()=>{LANG=LANG==="tr"?"en":"tr";
+  try{localStorage.setItem("noral_lang",LANG)}catch(e){}
+  applyLang();};
+applyLang();
+render();addTab();
+</script>
+</body>
+</html>

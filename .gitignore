@@ -1,0 +1,16 @@
+/target
+# Build artifacts (rebuildable, never commit)
+/release/
+*.exe
+*.WebView2/
+*.AppImage
+noral-web-linux-*
+# Secrets — API keys live NEXT TO the exe, never in git
+*-key.txt
+# Local runtime data (cache, trained model)
+*.db
+noral-model.json
+# OS / editor noise
+Thumbs.db
+.vscode/
+.idea/
