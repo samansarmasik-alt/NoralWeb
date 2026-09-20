@@ -1,0 +1,24 @@
+[package]
+name = "noral-jni"
+version = "0.37.0"
+edition = "2021"
+
+[lib]
+name = "noralcore"
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
+opt-level = "z"
+
+# Çekirdek masaüstünden #[path] ile alınır — kopya yok, hep senkron.
+# GUI bağımlılığı YOK (ureq-only + jni) — Android .so olarak derlenir.
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde-big-array = "0.5"
+ureq = { version = "2", default-features = false, features = ["tls"] }
+jni = "0.21"

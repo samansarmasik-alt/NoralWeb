@@ -1,0 +1,64 @@
+name: apk
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TAG: v0.37.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: NDK clang bul
+        run: |
+          NDK=$(ls -d /usr/local/lib/android/sdk/ndk/* 2>/dev/null | sort -V | tail -1)
+          echo "NDK: $NDK"
+          BIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+          CLANG=$(ls $BIN/aarch64-linux-android??-clang 2>/dev/null | sort -t- -k3 -n | tail -1)
+          if [ -z "$CLANG" ]; then CLANG=$BIN/aarch64-linux-android-clang; fi
+          echo "CLANG: $CLANG"
+          test -x "$CLANG"
+          echo "CLANG=$CLANG" >> $GITHUB_ENV
+          echo "NDK_BIN=$BIN" >> $GITHUB_ENV
+      - name: Rust Android hedefi
+        run: rustup target add aarch64-linux-android
+      - name: Rust cekirdek (.so, arm64)
+        env:
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ env.CLANG }}
+          CC_aarch64_linux_android: ${{ env.CLANG }}
+          AR_aarch64_linux_android: ${{ env.NDK_BIN }}/llvm-ar
+        run: |
+          cargo build --release --manifest-path jni/Cargo.toml --target aarch64-linux-android
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          cp jni/target/aarch64-linux-android/release/libnoralcore.so android/app/src/main/jniLibs/arm64-v8a/
+          file android/app/src/main/jniLibs/arm64-v8a/libnoralcore.so
+      - name: Gradle kur
+        run: |
+          curl -fsSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+          echo "/tmp/gradle-8.7/bin" >> $GITHUB_PATH
+      - name: APK derle
+        run: |
+          cd android
+          gradle :app:assembleDebug --no-daemon
+          ls -la app/build/outputs/apk/debug/
+      - name: APK dogrula
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          unzip -l $APK | grep -E "lib/arm64-v8a/libnoralcore.so|assets/index.html|classes.dex"
+          AAPT=$(ls /usr/local/lib/android/sdk/build-tools/*/aapt 2>/dev/null | sort -V | tail -1)
+          "$AAPT" dump badging $APK | head -2
+      - name: Release'e yukle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk NoralWeb-android.apk
+          gh release upload "$TAG" NoralWeb-android.apk --clobber
+          gh release view "$TAG" --json assets --jq '.assets[].name'

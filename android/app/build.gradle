@@ -1,0 +1,38 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.noralweb'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.noralweb'
+        minSdk 26
+        targetSdk 34
+        versionCode 37
+        versionName '0.37.0'
+    }
+
+    buildTypes {
+        debug {
+            // CI imzası yok: debug APK doğrudan kurulur.
+        }
+        release {
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// Masaüstüyle aynı arayüz: ui/index.html derlemede asset'e kopyalanır (çift kaynak yok).
+tasks.register('kopyaArayuz', Copy) {
+    from '../../ui/index.html'
+    into 'src/main/assets'
+    rename { 'index.html' }
+}
+preBuild.dependsOn('kopyaArayuz')
