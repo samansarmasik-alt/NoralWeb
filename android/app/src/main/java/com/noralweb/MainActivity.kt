@@ -12,8 +12,14 @@ class MainActivity : Activity() {
 
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
-        // Rust çekirdeğine yazılabilir dizin (model + anahtarlar buraya).
-        Core.init(filesDir.absolutePath + "/noral")
+        try {
+            // Rust çekirdeğine yazılabilir dizin (model + anahtarlar buraya).
+            Core.init(filesDir.absolutePath + "/noral")
+        } catch (e: Throwable) {
+            // Kütüphane yüklenemezse sessiz kapanma yerine sebebi göster.
+            hataGoster("Çekirdek yüklenemedi:\n" + (e.message ?: e.toString()))
+            return
+        }
 
         web = WebView(this)
         setContentView(web)
@@ -53,6 +59,14 @@ class MainActivity : Activity() {
             }
         }
         web.loadUrl("file:///android_asset/index.html")
+    }
+
+    private fun hataGoster(mesaj: String) {
+        val t = android.widget.TextView(this)
+        t.text = "NoralWeb açılamadı\n\n" + mesaj + "\n\nBu yazının ekran görüntüsünü gönder."
+        t.setPadding(48, 96, 48, 48)
+        t.textSize = 16f
+        setContentView(t)
     }
 
     override fun onBackPressed() {

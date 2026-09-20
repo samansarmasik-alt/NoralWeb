@@ -34,6 +34,8 @@ jobs:
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ env.CLANG }}
           CC_aarch64_linux_android: ${{ env.CLANG }}
           AR_aarch64_linux_android: ${{ env.NDK_BIN }}/llvm-ar
+          # Android 15+ (A35/One UI 7): 16KB sayfa zorunlu, yoksa dlopen patlar.
+          RUSTFLAGS: -C link-arg=-zmax-page-size=16384 -C link-arg=-zcommon-page-size=16384
         run: |
           cargo build --release --manifest-path jni/Cargo.toml --target aarch64-linux-android
           mkdir -p android/app/src/main/jniLibs/arm64-v8a
