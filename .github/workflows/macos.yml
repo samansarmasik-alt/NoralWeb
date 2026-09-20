@@ -1,0 +1,37 @@
+name: macos
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    env:
+      TAG: v0.37.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust hedefleri
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: CLI (arm64 + x64)
+        run: |
+          cargo build --release --manifest-path cli/Cargo.toml
+          cargo build --release --manifest-path cli/Cargo.toml --target x86_64-apple-darwin
+          cp target/release/noral-cli noral-cli-macos-arm64
+          cp target/x86_64-apple-darwin/release/noral-cli noral-cli-macos-x64
+          ./noral-cli-macos-arm64 --version
+      - name: GUI (arm64 + x64) + .app paketi
+        run: |
+          sed -i '' 's/\r$//' pack-macos.sh
+          chmod +x pack-macos.sh
+          cargo build --release
+          cargo build --release --target x86_64-apple-darwin
+          ./pack-macos.sh arm64 target/release/noral-web
+          ./pack-macos.sh x64 target/x86_64-apple-darwin/release/noral-web
+      - name: Release'e yukle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$TAG" noral-cli-macos-arm64 noral-cli-macos-x64 NoralWeb-macos-arm64.tar.gz NoralWeb-macos-x64.tar.gz --clobber
+          gh release view "$TAG" --json assets --jq '.assets[].name'

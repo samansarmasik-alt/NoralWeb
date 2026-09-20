@@ -1,10 +1,17 @@
 #!/bin/sh
-# NoralWeb terminal istemcisi (Linux): `noral` komutunu kurar.
+# NoralWeb terminal istemcisi (Linux + macOS): `noral` komutunu kurar.
 # Kullanim: curl -fsSL https://raw.githubusercontent.com/samansarmasik-alt/NoralWeb/main/install.sh | sh
 # Test: INSTALL_DIR=/tmp/noraltest sh install.sh  (PATH degismez)
 set -e
 TAG="v0.37.0"
-ASSET="noral-cli-linux-v37"
+if [ "$(uname -s)" = "Darwin" ]; then
+  case "$(uname -m)" in
+    arm64) ASSET="noral-cli-macos-arm64" ;;
+    *) ASSET="noral-cli-macos-x64" ;;
+  esac
+else
+  ASSET="noral-cli-linux-v37"
+fi
 URL="https://github.com/samansarmasik-alt/NoralWeb/releases/download/$TAG/$ASSET"
 DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 mkdir -p "$DIR"
