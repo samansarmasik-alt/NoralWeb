@@ -20,11 +20,11 @@ mod neural;
 mod nim;
 
 fn yardim() {
-    println!("noral-cli — nöral araştırma motoru (terminal)");
+    println!("noral-cli v0.37.0 — nöral araştırma motoru (terminal)");
     println!();
-    println!("  noral-cli \"sorgu\" [--fast] [--apx0|--apx1|--apx2] [--limit N] [--json]");
-    println!("  noral-cli --agent \"soru\" [--osint]");
-    println!("  noral-cli --testmode");
+    println!("  noral \"sorgu\" [--fast] [--apx0|--apx1|--apx2] [--limit N] [--json]");
+    println!("  noral --agent \"soru\" [--osint]");
+    println!("  noral --testmode");
     println!();
     println!("Araştırma: 70+ canlı kaynak → MLP sıralama → rapor.");
     println!("Ajan: NIM anahtarı gerekir (NIM_KEY env veya anahtar dosyası).");
@@ -202,7 +202,21 @@ fn ajan(message: &str, mode: &str) {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.is_empty() || args.iter().any(|a| a == "--help" || a == "-h") {
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("noral-cli v0.37.0");
+        return;
+    }
+    if args.is_empty() {
+        yardim();
+        // Çift tıklamayla açanlar okuyabilsin (terminalde Enter'a basılır, zararsız).
+        #[cfg(windows)]
+        {
+            use std::io::BufRead;
+            let _ = std::io::stdin().lock().lines().next();
+        }
+        return;
+    }
+    if args.iter().any(|a| a == "--help" || a == "-h") {
         yardim();
         return;
     }

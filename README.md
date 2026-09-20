@@ -117,6 +117,32 @@ Drop any of these next to the binary (or `%APPDATA%\NoralWeb` on Windows,
 
 Without keys you still get the full 40+ free-source pipeline.
 
+## Terminal (no exe double-click)
+
+`noral` behaves like any modern CLI — install once, run from anywhere:
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/samansarmasik-alt/NoralWeb/main/install.ps1 | iex
+```
+
+```bash
+# Linux
+curl -fsSL https://raw.githubusercontent.com/samansarmasik-alt/NoralWeb/main/install.sh | sh
+```
+
+Then:
+
+```bash
+noral "kuantum bilgisayar" --fast --limit 5   # ranked report
+noral "sorgu" --json                          # machine-readable
+noral --agent "bulguları topla" --osint        # agentic (needs NIM_KEY)
+noral --testmode                               # probe suite
+```
+
+Source lives in [`cli/`](cli) and shares the desktop core by reference
+(`#[path]` — zero copy drift). Linux binary needs nothing but `chmod +x`.
+
 ## Usage
 
 - **Address bar**: URL → opens site. Anything else → neural research.
