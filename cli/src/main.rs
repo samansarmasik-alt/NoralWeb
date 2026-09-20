@@ -35,26 +35,174 @@ const C_DM: &str = "\x1b[90m";
 const C_GN: &str = "\x1b[32m";
 const C_RD: &str = "\x1b[31m";
 
-fn banner() {
-    println!("{C_MG}  ███╗   ██╗{C_CY} ██████╗ ██████╗  █████╗ ██╗     {C_RST}");
-    println!("{C_MG}  ████╗  ██║{C_CY}██╔═══██╗██╔══██╗██╔══██╗██║     {C_RST}");
-    println!("{C_MG}  ██╔██╗ ██║{C_CY}██║   ██║██████╔╝███████║██║     {C_RST}");
-    println!("{C_MG}  ██║╚██╗██║{C_CY}██║   ██║██╔══██╗██╔══██║██║     {C_RST}");
-    println!("{C_MG}  ██║ ╚████║{C_CY}╚██████╔╝██║  ██║██║  ██║███████╗{C_RST}");
-    println!("{C_MG}  ╚═╝  ╚═══╝{C_CY} ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝{C_RST}");
-    println!("{C_DM}  nöral araştırma motoru · 70+ canlı kaynak · MLP sıralayıcı{C_RST}");
+const SURUM: &str = "0.37.0";
+
+/// Renk kararı (çalışma-anı): boru/NO_COLOR/dumb uçta ANSI kapat.
+fn renk_acik() -> bool {
+    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        use std::io::IsTerminal;
+        std::env::var_os("NO_COLOR").is_none()
+            && std::env::var("TERM").map(|t| t != "dumb").unwrap_or(true)
+            && std::io::stdout().is_terminal()
+    })
 }
 
-/// Animasyonlu bekleme imleci. Dönen handle + durdurma bayrağı verir.
+struct Pal {
+    b: &'static str,
+    cy: &'static str,
+    mg: &'static str,
+    yl: &'static str,
+    dm: &'static str,
+    gn: &'static str,
+    rd: &'static str,
+    rst: &'static str,
+}
+
+fn pal() -> Pal {
+    if renk_acik() {
+        Pal { b: C_B, cy: C_CY, mg: C_MG, yl: C_YL, dm: C_DM, gn: C_GN, rd: C_RD, rst: C_RST }
+    } else {
+        Pal { b: "", cy: "", mg: "", yl: "", dm: "", gn: "", rd: "", rst: "" }
+    }
+}
+
+/// Terminal genişliği (COLUMNS yoksa 80), kartlar buna göre dizilir.
+fn term_w() -> usize {
+    std::env::var("COLUMNS").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(80).clamp(64, 110)
+}
+
+fn kar_say(s: &str) -> usize {
+    s.chars().count()
+}
+
+/// Uzunsa … ile kırp (Türkçe-güvenli: karakter sayar).
+fn kisalt(s: &str, n: usize) -> String {
+    if kar_say(s) <= n {
+        return s.to_string();
+    }
+    let mut k: String = s.chars().take(n.saturating_sub(1)).collect();
+    k.push('…');
+    k
+}
+
+/// Kelime-bazlı satırlara böl (uzun tek kelimeyi kırpar).
+fn wrap(s: &str, w: usize) -> Vec<String> {
+    let mut sat = Vec::new();
+    let mut cur = String::new();
+    let mut n = 0usize;
+    for kel in s.split_whitespace() {
+        let kl = kar_say(kel);
+        if kl >= w {
+            if !cur.is_empty() {
+                sat.push(std::mem::take(&mut cur));
+                n = 0;
+            }
+            sat.push(kisalt(kel, w));
+            continue;
+        }
+        if n > 0 && n + 1 + kl > w {
+            sat.push(std::mem::take(&mut cur));
+            n = 0;
+        }
+        if n > 0 {
+            cur.push(' ');
+            n += 1;
+        }
+        cur.push_str(kel);
+        n += kl;
+    }
+    if !cur.is_empty() {
+        sat.push(cur);
+    }
+    sat
+}
+
+/// 10 hücreli skor çubuğu: ████████░░
+fn skor_bar(s: f64) -> String {
+    let dolu = (s.clamp(0.0, 1.0) * 10.0).round() as usize;
+    "█".repeat(dolu) + &"░".repeat(10usize.saturating_sub(dolu))
+}
+
+fn skor_renk(p: &Pal, s: f64) -> &'static str {
+    if s >= 0.7 {
+        p.gn
+    } else if s >= 0.4 {
+        p.yl
+    } else {
+        p.rd
+    }
+}
+
+/// Kutu gövde satırı: `│ içerik (sağa boşluklu) │`. `duz` renksiz uzunluktur.
+fn kutu_satir(p: &Pal, ic: usize, duz: usize, renkli: &str) {
+    let bos = " ".repeat(ic.saturating_sub(1 + duz));
+    println!("{}│{} {}{}{}│{}", p.b, p.rst, renkli, bos, p.b, p.rst);
+}
+
+/// Başlıklı kutu: üstte `╭─ başlık ──╮`, altta `╰──╯`.
+fn panel(p: &Pal, w: usize, baslik: &str, satirlar: &[String]) {
+    let ic = w.saturating_sub(2);
+    let b = kisalt(baslik, ic.saturating_sub(4));
+    let duz = format!("╭─ {} ", b);
+    let dolgu = "─".repeat(ic.saturating_sub(kar_say(&duz)));
+    println!("{}╭─ {}{}{} {}{}╮{}", p.b, p.cy, b, p.b, dolgu, p.rst, p.rst);
+    for s in satirlar {
+        kutu_satir(p, ic, kar_say(s), s);
+    }
+    println!("{}╰{}╯{}", p.b, "─".repeat(ic), p.rst);
+}
+
+/// Virgüllü liste kutusuz yazılır (en_cok satırı aşarsa toplamı söyler).
+fn liste(p: &Pal, w: usize, etiket: &str, items: &[String], en_cok: usize) {
+    if items.is_empty() {
+        return;
+    }
+    let girinti = " ".repeat(kar_say(etiket) + 2);
+    let satirlar = wrap(&items.join(" · "), w.saturating_sub(kar_say(etiket) + 4));
+    for (i, s) in satirlar.iter().take(en_cok).enumerate() {
+        if i == 0 {
+            println!("{}{}:{} {}", p.dm, etiket, p.rst, s);
+        } else {
+            println!("{}{}", girinti, s);
+        }
+    }
+    if satirlar.len() > en_cok {
+        println!("{}{}… (toplam {})", girinti, p.dm, items.len());
+    }
+}
+
+fn banner() {
+    let p = pal();
+    println!("{mg}{b}  ███╗   ██╗{cy} ██████╗ ██████╗  █████╗ ██╗     {rst}", mg = p.mg, b = p.b, cy = p.cy, rst = p.rst);
+    println!("{mg}{b}  ████╗  ██║{cy}██╔═══██╗██╔══██╗██╔══██╗██║     {rst}", mg = p.mg, b = p.b, cy = p.cy, rst = p.rst);
+    println!("{mg}{b}  ██╔██╗ ██║{cy}██║   ██║██████╔╝███████║██║     {rst}", mg = p.mg, b = p.b, cy = p.cy, rst = p.rst);
+    println!("{mg}{b}  ██║╚██╗██║{cy}██║   ██║██╔══██╗██╔══██║██║     {rst}", mg = p.mg, b = p.b, cy = p.cy, rst = p.rst);
+    println!("{mg}{b}  ██║ ╚████║{cy}╚██████╔╝██║  ██║██║  ██║███████╗{rst}", mg = p.mg, b = p.b, cy = p.cy, rst = p.rst);
+    println!("{mg}{b}  ╚═╝  ╚═══╝{cy} ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝{rst}", mg = p.mg, b = p.b, cy = p.cy, rst = p.rst);
+    println!("{dm}  ── nöral araştırma motoru · 70+ canlı kaynak · MLP sıralayıcı · v{SURUM} ──{rst}", dm = p.dm, rst = p.rst);
+}
+
+/// Animasyonlu bekleme imleci (süre sayaçlı). Dönen handle + durdurma bayrağı verir.
 fn spin(mesaj: &str) -> (std::thread::JoinHandle<()>, Arc<AtomicBool>) {
     let stop = Arc::new(AtomicBool::new(false));
     let s2 = stop.clone();
     let m = mesaj.to_string();
     let h = std::thread::spawn(move || {
+        let p = pal();
+        let t0 = std::time::Instant::now();
         let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let mut i = 0usize;
         while !s2.load(Ordering::Relaxed) {
-            print!("\r{C_CY}{}{C_RST} {}", frames[i % frames.len()], m);
+            print!(
+                "\r{cy}{frm}{rst} {msg} {dm}{sn}sn{rst}",
+                cy = p.cy,
+                frm = frames[i % frames.len()],
+                rst = p.rst,
+                msg = m,
+                dm = p.dm,
+                sn = t0.elapsed().as_secs()
+            );
             let _ = std::io::Write::flush(&mut std::io::stdout());
             std::thread::sleep(Duration::from_millis(80));
             i += 1;
@@ -63,16 +211,6 @@ fn spin(mesaj: &str) -> (std::thread::JoinHandle<()>, Arc<AtomicBool>) {
         let _ = std::io::Write::flush(&mut std::io::stdout());
     });
     (h, stop)
-}
-
-fn skor_renk(s: f64) -> &'static str {
-    if s >= 0.7 {
-        C_GN
-    } else if s >= 0.4 {
-        C_YL
-    } else {
-        C_RD
-    }
 }
 
 fn open_url(u: &str) {
@@ -90,14 +228,38 @@ fn open_url(u: &str) {
     }
 }
 
+/// Tek sonuç kartı: başlıklı üst çizgi + başlık + url/kaynak + 3 satıra kadar özet.
+fn kart(p: &Pal, no: usize, r: &research::Ranked, w: usize) {
+    let ic = w.saturating_sub(2);
+    let skor = format!("{:.2}", r.score);
+    let bar = skor_bar(r.score);
+    let rk = skor_renk(p, r.score);
+    let duz = format!("╭─ {} ─ [{}] {} ", no, skor, bar);
+    let dolgu = "─".repeat(ic.saturating_sub(kar_say(&duz)));
+    println!(
+        "{b}╭─ {yl}{b}{no}{rst}{b} ─ [{rk}{skor}{rst}{b}] {rk}{bar}{rst}{b} {dolgu}╮{rst}",
+        b = p.b, yl = p.yl, no = no, rst = p.rst, rk = rk, skor = skor, bar = bar, dolgu = dolgu
+    );
+    let baslik = kisalt(&r.title, ic.saturating_sub(1));
+    kutu_satir(p, ic, kar_say(&baslik), &format!("{}{}{}{}", p.b, p.cy, baslik, p.rst));
+    let url_duz = kisalt(&r.url, ic.saturating_sub(kar_say(&r.source) + 6));
+    let url_renkli = format!("{}{}{} · {}{}{}", p.dm, url_duz, p.rst, p.mg, r.source, p.rst);
+    kutu_satir(p, ic, kar_say(&format!("{} · {}", url_duz, r.source)), &url_renkli);
+    for s in wrap(&r.snippet, ic.saturating_sub(1)).into_iter().take(3) {
+        kutu_satir(p, ic, kar_say(&s), &s);
+    }
+    println!("{}╰{}╯{}", p.b, "─".repeat(ic), p.rst);
+}
+
 /// Sonuç açma istemi: numara → tarayıcıda aç, Enter/q → geri.
 fn open_prompt(results: &[research::Ranked]) {
     use std::io::{BufRead, IsTerminal};
     if results.is_empty() || !std::io::stdin().is_terminal() {
         return;
     }
+    let p = pal();
     loop {
-        print!("{C_YL}numara{C_RST} (aç) / Enter (geri): ");
+        print!("{yl}❯{rst} no ile aç · Enter ile kapat: ", yl = p.yl, rst = p.rst);
         let _ = std::io::Write::flush(&mut std::io::stdout());
         let mut line = String::new();
         if std::io::stdin().lock().read_line(&mut line).unwrap_or(0) == 0 {
@@ -110,22 +272,25 @@ fn open_prompt(results: &[research::Ranked]) {
         match t.parse::<usize>() {
             Ok(n) if n >= 1 && n <= results.len() => {
                 open_url(&results[n - 1].url);
-                println!("{}açıldı: {}{C_RST}", C_GN, results[n - 1].url);
+                println!("{gn}✓ açıldı:{rst} {}", results[n - 1].url, gn = p.gn, rst = p.rst);
             }
-            _ => println!("1-{} arası sayı yaz", results.len()),
+            _ => println!("{rd}1-{len} arası bir numara yaz{rst}", rd = p.rd, len = results.len(), rst = p.rst),
         }
     }
 }
 
 fn yardim() {
-    println!("noral-cli v0.37.0 — nöral araştırma motoru (terminal)");
-    println!();
-    println!("  noral \"sorgu\" [--fast] [--apx0|--apx1|--apx2] [--limit N] [--json]");
-    println!("  noral --agent \"soru\" [--osint]");
-    println!("  noral --testmode");
-    println!();
-    println!("Araştırma: 70+ canlı kaynak → MLP sıralama → rapor.");
-    println!("Ajan: NIM anahtarı gerekir (NIM_KEY env veya anahtar dosyası).");
+    let p = pal();
+    println!("{mg}{b}noral-cli{rst} {dm}v{SURUM} — nöral araştırma motoru (terminal){rst}", mg = p.mg, b = p.b, rst = p.rst, dm = p.dm);
+    panel(&p, 72, "kullanım", &[
+        "noral \"sorgu\" [--fast] [--apx0|--apx1|--apx2] [--limit N] [--json]".to_string(),
+        "noral --agent \"soru\" [--osint]".to_string(),
+        "noral --testmode".to_string(),
+    ]);
+    panel(&p, 72, "notlar", &[
+        "Araştırma: 70+ canlı kaynak → MLP sıralama → kartlar.".to_string(),
+        "Ajan: NIM anahtarı gerekir (NIM_KEY env veya anahtar dosyası).".to_string(),
+    ]);
 }
 
 fn arastir(query: &str, deep: bool, apx: u8, limit: usize, json: bool) {
@@ -160,48 +325,60 @@ fn arastir(query: &str, deep: bool, apx: u8, limit: usize, json: bool) {
         println!("{}", serde_json::to_string_pretty(&rep).unwrap_or_default());
         return;
     }
+    let p = pal();
+    let w = term_w();
     let gosteren = results.len().min(limit);
-    println!(
-        "{C_B}{}{C_RST} sonuç · {} aday · {} ms{}",
+    let ms = t0.elapsed().as_millis();
+    let sure = if ms < 1000 {
+        format!("{}ms", ms)
+    } else {
+        format!("{:.1}sn", ms as f64 / 1000.0)
+    };
+    let ucret = if cost > 0.0 { format!("~${:.4}", cost) } else { "ücretsiz".to_string() };
+    panel(&p, w, &format!("\"{}\"", kisalt(query, w / 2)), &[format!(
+        "{} sonuç · {} aday · {} kaynak · {} · {}",
         results.len(),
         results.len(),
-        t0.elapsed().as_millis(),
-        if cost > 0.0 {
-            format!(" · ~${}", cost)
-        } else {
-            " · ücretsiz".to_string()
-        }
-    );
-    println!("{C_DM}kaynaklar:{C_RST} {}", sources.join(" | "));
+        sources.len(),
+        sure,
+        ucret
+    )]);
+    liste(&p, w, "kaynaklar", &sources, 2);
     if !silent.is_empty() {
-        println!("{C_DM}suskun:{C_RST} {}", silent.join(" | "));
+        liste(&p, w, "suskun", &silent, 1);
     }
     println!();
     for (i, r) in results.iter().take(limit).enumerate() {
+        kart(&p, i + 1, r, w);
+    }
+    if gosteren > 0 {
         println!(
-            "{C_YL}{C_B}{}. {C_RST}[{}{:.2}{C_RST}] {C_B}{C_CY}{}{C_RST}",
-            i + 1,
-            skor_renk(r.score),
-            r.score,
-            r.title
+            "{dm}gösteriliyor: {g}/{t}{rst}",
+            dm = p.dm,
+            g = gosteren,
+            t = results.len(),
+            rst = p.rst
         );
-        println!("   {C_DM}{}{C_RST} · {C_MG}{}{C_RST}", r.url, r.source);
-        if !r.snippet.is_empty() {
-            let s: String = r.snippet.chars().take(220).collect();
-            println!("   {}", s);
-        }
     }
     open_prompt(&results[..gosteren]);
 }
 
 fn testmodu() {
+    let p = pal();
     let s = neural::load_or_train();
     let probes = neural::self_test(&s.net);
-    let pass = probes.iter().filter(|p| p.pass).count();
-    println!("{} · {} parametre · prob {}/{}", s.net.arch, s.net.params, pass, probes.len());
-    println!("eğitim: {} çift · model v{} · {} tıklama", neural::BASE_PAIRS.len(), s.version, s.clicks);
-    for p in &probes {
-        println!("[{}] {} → {} ({})", if p.pass { "PASS" } else { "FAIL" }, p.name, p.output, p.expect);
+    let pass = probes.iter().filter(|pr| pr.pass).count();
+    panel(&p, 64, "çekirdek testi", &[
+        format!("{} · {} parametre · prob {}/{}", s.net.arch, s.net.params, pass, probes.len()),
+        format!("eğitim: {} çift · model v{} · {} tıklama", neural::BASE_PAIRS.len(), s.version, s.clicks),
+    ]);
+    for pr in &probes {
+        let isaret = if pr.pass {
+            format!("{}✓{}", p.gn, p.rst)
+        } else {
+            format!("{}✗{}", p.rd, p.rst)
+        };
+        println!("  {} {} → {} ({})", isaret, pr.name, pr.output, pr.expect);
     }
 }
 
@@ -214,6 +391,7 @@ fn ajan(message: &str, mode: &str) {
         }
     };
     let snap = neural::load_or_train();
+    let p = pal();
     let mut sys = nim::sys_prompt(mode);
     sys.push_str("\nCLI NOTU: harvest ve sekme araçları YOK; open_tab yerine URL'leri yanıtta KANIT LİNKLERİ olarak listele, fetch_page ile oku.");
     let mut messages = vec![nim::Msg {
@@ -231,8 +409,13 @@ fn ajan(message: &str, mode: &str) {
     let tools = nim::tools_schema(false);
     let mut evidence: Vec<String> = Vec::new();
     let mut seen_q = std::collections::HashSet::new();
+    let mut adim = 0usize;
     for _step in 0..6 {
-        let reply = match nim::chat(&key, nim::DEFAULT_MODEL, &messages, &tools) {
+        let (sh, ss) = spin("model düşünüyor…");
+        let sonuc = nim::chat(&key, nim::DEFAULT_MODEL, &messages, &tools);
+        ss.store(true, Ordering::Relaxed);
+        let _ = sh.join();
+        let reply = match sonuc {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("model hatası: {}", e);
@@ -241,15 +424,20 @@ fn ajan(message: &str, mode: &str) {
         };
         if reply.tool_calls.is_empty() {
             if reply.content.trim().is_empty() && !evidence.is_empty() {
-                println!("bulgular:\n{}", evidence.join("\n"));
+                println!("{}{}── bulgular ──{}", p.b, p.cy, p.rst);
+                println!("{}", evidence.join("\n"));
             } else {
                 println!("{}", reply.content);
             }
             return;
         }
+        adim += 1;
         eprintln!(
-            "[adım] {}",
-            reply.tool_calls.iter().map(|t| t.name.clone()).collect::<Vec<_>>().join(", ")
+            "{}◆ adım {}:{} {}",
+            p.cy,
+            adim,
+            p.rst,
+            reply.tool_calls.iter().map(|t| t.name.clone()).collect::<Vec<_>>().join(" + ")
         );
         messages.push(nim::Msg {
             role: "assistant".into(),
@@ -321,7 +509,8 @@ fn ajan(message: &str, mode: &str) {
         }
     }
     if !evidence.is_empty() {
-        println!("bulgular:\n{}", evidence.join("\n"));
+        println!("{}{}── bulgular ──{}", p.b, p.cy, p.rst);
+        println!("{}", evidence.join("\n"));
     }
 }
 
@@ -333,10 +522,15 @@ fn menu() {
         return;
     }
     banner();
+    let p = pal();
+    panel(&p, 58, "noral", &[
+        "[1] Araştır    70+ canlı kaynakta tara".to_string(),
+        "[2] Ajan       NIM ile derin soru-cevap".to_string(),
+        "[3] Ağ testi   model + çekirdek kontrolü".to_string(),
+        "[q] Çık".to_string(),
+    ]);
     loop {
-        println!();
-        println!("{C_YL}[1]{C_RST} Araştır   {C_YL}[2]{C_RST} Ajan   {C_YL}[3]{C_RST} Ağ testi   {C_YL}[q]{C_RST} Çık");
-        print!("{C_CY}noral›{C_RST} ");
+        print!("{cy}noral{rst} ❯ ", cy = p.cy, rst = p.rst);
         let _ = std::io::Write::flush(&mut std::io::stdout());
         let mut line = String::new();
         if std::io::stdin().lock().read_line(&mut line).unwrap_or(0) == 0 {
@@ -344,7 +538,7 @@ fn menu() {
         }
         match line.trim() {
             "1" => {
-                print!("sorgu: ");
+                print!("{cy}sorgu{rst} ❯ ", cy = p.cy, rst = p.rst);
                 let _ = std::io::Write::flush(&mut std::io::stdout());
                 let mut q = String::new();
                 if std::io::stdin().lock().read_line(&mut q).unwrap_or(0) == 0 {
@@ -356,7 +550,7 @@ fn menu() {
                 }
             }
             "2" => {
-                print!("sorun: ");
+                print!("{cy}soru{rst} ❯ ", cy = p.cy, rst = p.rst);
                 let _ = std::io::Write::flush(&mut std::io::stdout());
                 let mut m = String::new();
                 if std::io::stdin().lock().read_line(&mut m).unwrap_or(0) == 0 {
@@ -381,7 +575,7 @@ fn menu() {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("noral-cli v0.37.0");
+        println!("noral-cli v{SURUM}");
         return;
     }
     if args.is_empty() {
