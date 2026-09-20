@@ -19,6 +19,100 @@ mod neural;
 #[path = "../../src/nim.rs"]
 mod nim;
 
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::Duration;
+
+// ---------- renkli terminal sahne (sıfır bağımlılık, ANSI) ----------
+const C_RST: &str = "\x1b[0m";
+const C_B: &str = "\x1b[1m";
+const C_CY: &str = "\x1b[36m";
+const C_MG: &str = "\x1b[35m";
+const C_YL: &str = "\x1b[33m";
+const C_DM: &str = "\x1b[90m";
+const C_GN: &str = "\x1b[32m";
+const C_RD: &str = "\x1b[31m";
+
+fn banner() {
+    println!("{C_MG}  ███╗   ██╗{C_CY} ██████╗ ██████╗  █████╗ ██╗     {C_RST}");
+    println!("{C_MG}  ████╗  ██║{C_CY}██╔═══██╗██╔══██╗██╔══██╗██║     {C_RST}");
+    println!("{C_MG}  ██╔██╗ ██║{C_CY}██║   ██║██████╔╝███████║██║     {C_RST}");
+    println!("{C_MG}  ██║╚██╗██║{C_CY}██║   ██║██╔══██╗██╔══██║██║     {C_RST}");
+    println!("{C_MG}  ██║ ╚████║{C_CY}╚██████╔╝██║  ██║██║  ██║███████╗{C_RST}");
+    println!("{C_MG}  ╚═╝  ╚═══╝{C_CY} ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝{C_RST}");
+    println!("{C_DM}  nöral araştırma motoru · 70+ canlı kaynak · MLP sıralayıcı{C_RST}");
+}
+
+/// Animasyonlu bekleme imleci. Dönen handle + durdurma bayrağı verir.
+fn spin(mesaj: &str) -> (std::thread::JoinHandle<()>, Arc<AtomicBool>) {
+    let stop = Arc::new(AtomicBool::new(false));
+    let s2 = stop.clone();
+    let m = mesaj.to_string();
+    let h = std::thread::spawn(move || {
+        let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let mut i = 0usize;
+        while !s2.load(Ordering::Relaxed) {
+            print!("\r{C_CY}{}{C_RST} {}", frames[i % frames.len()], m);
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            std::thread::sleep(Duration::from_millis(80));
+            i += 1;
+        }
+        print!("\r\x1b[2K");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+    });
+    (h, stop)
+}
+
+fn skor_renk(s: f64) -> &'static str {
+    if s >= 0.7 {
+        C_GN
+    } else if s >= 0.4 {
+        C_YL
+    } else {
+        C_RD
+    }
+}
+
+fn open_url(u: &str) {
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("cmd").args(["/C", "start", "", u]).spawn();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(u).spawn();
+    }
+}
+
+/// Sonuç açma istemi: numara → tarayıcıda aç, Enter/q → geri.
+fn open_prompt(results: &[research::Ranked]) {
+    use std::io::{BufRead, IsTerminal};
+    if results.is_empty() || !std::io::stdin().is_terminal() {
+        return;
+    }
+    loop {
+        print!("{C_YL}numara{C_RST} (aç) / Enter (geri): ");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        let mut line = String::new();
+        if std::io::stdin().lock().read_line(&mut line).unwrap_or(0) == 0 {
+            return;
+        }
+        let t = line.trim();
+        if t.is_empty() || t == "q" {
+            return;
+        }
+        match t.parse::<usize>() {
+            Ok(n) if n >= 1 && n <= results.len() => {
+                open_url(&results[n - 1].url);
+                println!("{}açıldı: {}{C_RST}", C_GN, results[n - 1].url);
+            }
+            _ => println!("1-{} arası sayı yaz", results.len()),
+        }
+    }
+}
+
 fn yardim() {
     println!("noral-cli v0.37.0 — nöral araştırma motoru (terminal)");
     println!();
@@ -33,9 +127,18 @@ fn yardim() {
 fn arastir(query: &str, deep: bool, apx: u8, limit: usize, json: bool) {
     use std::time::Instant;
     let t0 = Instant::now();
+    let (spin_h, spin_stop) = if json {
+        // JSON pipedir — animasyon yok.
+        let h = std::thread::spawn(|| {});
+        (h, Arc::new(AtomicBool::new(true)))
+    } else {
+        spin("kaynaklar taranıyor…")
+    };
     let snap = neural::load_or_train();
     let (cands, sources, silent, cost) = fetch::live_search(query, deep, apx);
     let results = research::rank(&research::NeuralRank, &snap.net, query, cands);
+    spin_stop.store(true, Ordering::Relaxed);
+    let _ = spin_h.join();
     if json {
         let rep = serde_json::json!({
             "query": query,
@@ -53,20 +156,38 @@ fn arastir(query: &str, deep: bool, apx: u8, limit: usize, json: bool) {
         println!("{}", serde_json::to_string_pretty(&rep).unwrap_or_default());
         return;
     }
-    println!("{} sonuç · {} aday · {} ms{}", results.len(), results.len(), t0.elapsed().as_millis(), if cost > 0.0 { format!(" · ~${}", cost) } else { " · ücretsiz".to_string() });
-    println!("kaynaklar: {}", sources.join(" | "));
+    let gosteren = results.len().min(limit);
+    println!(
+        "{C_B}{}{C_RST} sonuç · {} aday · {} ms{}",
+        results.len(),
+        results.len(),
+        t0.elapsed().as_millis(),
+        if cost > 0.0 {
+            format!(" · ~${}", cost)
+        } else {
+            " · ücretsiz".to_string()
+        }
+    );
+    println!("{C_DM}kaynaklar:{C_RST} {}", sources.join(" | "));
     if !silent.is_empty() {
-        println!("suskun: {}", silent.join(" | "));
+        println!("{C_DM}suskun:{C_RST} {}", silent.join(" | "));
     }
     println!();
     for (i, r) in results.iter().take(limit).enumerate() {
-        println!("{}. [{:.2}] {}", i + 1, r.score, r.title);
-        println!("   {} · {}", r.url, r.source);
+        println!(
+            "{C_YL}{C_B}{}. {C_RST}[{}{:.2}{C_RST}] {C_B}{C_CY}{}{C_RST}",
+            i + 1,
+            skor_renk(r.score),
+            r.score,
+            r.title
+        );
+        println!("   {C_DM}{}{C_RST} · {C_MG}{}{C_RST}", r.url, r.source);
         if !r.snippet.is_empty() {
             let s: String = r.snippet.chars().take(220).collect();
             println!("   {}", s);
         }
     }
+    open_prompt(&results[..gosteren]);
 }
 
 fn testmodu() {
@@ -200,6 +321,59 @@ fn ajan(message: &str, mode: &str) {
     }
 }
 
+/// Etkileşimli menü: düz `noral` yazınca açılır (arama kutulu mini arayüz).
+fn menu() {
+    use std::io::{BufRead, IsTerminal};
+    if !std::io::stdin().is_terminal() {
+        yardim();
+        return;
+    }
+    banner();
+    loop {
+        println!();
+        println!("{C_YL}[1]{C_RST} Araştır   {C_YL}[2]{C_RST} Ajan   {C_YL}[3]{C_RST} Ağ testi   {C_YL}[q]{C_RST} Çık");
+        print!("{C_CY}noral›{C_RST} ");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        let mut line = String::new();
+        if std::io::stdin().lock().read_line(&mut line).unwrap_or(0) == 0 {
+            return;
+        }
+        match line.trim() {
+            "1" => {
+                print!("sorgu: ");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+                let mut q = String::new();
+                if std::io::stdin().lock().read_line(&mut q).unwrap_or(0) == 0 {
+                    return;
+                }
+                let q = q.trim();
+                if !q.is_empty() {
+                    arastir(q, true, 1, 10, false);
+                }
+            }
+            "2" => {
+                print!("sorun: ");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+                let mut m = String::new();
+                if std::io::stdin().lock().read_line(&mut m).unwrap_or(0) == 0 {
+                    return;
+                }
+                let m = m.trim();
+                if !m.is_empty() {
+                    ajan(m, "arastirma");
+                }
+            }
+            "3" => testmodu(),
+            "q" | "Q" | "quit" | "exit" => return,
+            "" => {}
+            diger => {
+                // Sayı değilse direkt sorgu say (hızlı yol).
+                arastir(diger, true, 1, 10, false);
+            }
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
@@ -207,13 +381,7 @@ fn main() {
         return;
     }
     if args.is_empty() {
-        yardim();
-        // Çift tıklamayla açanlar okuyabilsin (terminalde Enter'a basılır, zararsız).
-        #[cfg(windows)]
-        {
-            use std::io::BufRead;
-            let _ = std::io::stdin().lock().lines().next();
-        }
+        menu();
         return;
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
