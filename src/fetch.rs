@@ -9,7 +9,9 @@
 //! resmi JSON API'ler birincil kaynaktır.
 
 use super::research::Candidate;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 /// Apinex harcaması (mikro-dolar, arama başına sıfırlanır).
@@ -64,11 +66,21 @@ fn agent_long() -> ureq::Agent {
         .build()
 }
 
+/// Yönlendirmesiz ajan: 307 bekçisinden çerez toplamak için (Yahoo 2-adımı).
+fn agent_noredir() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(6))
+        .redirects(0)
+        .build()
+}
+
 /// 429/503/5xx + taşıma hatalarında beklemeli tekrar (ajan şikayeti #4).
+/// Girişte istek freni: en fazla 10 paralel + mini-jitter (kendi 429'umuzu üretmeyelim).
 fn with_retry<F>(mut f: F) -> Result<ureq::Response, ureq::Error>
 where
     F: FnMut() -> Result<ureq::Response, ureq::Error>,
 {
+    let _slot = throttle();
     let mut wait = 1u64;
     for attempt in 1..=3u32 {
         match f() {
@@ -99,6 +111,106 @@ fn get_text(url: &str) -> Option<String> {
     .ok()?
     .into_string()
     .ok()
+}
+
+/// Paralel istek freni (en fazla 10 uçuşan istek) + mini-jitter.
+/// Drop olunca yuva bırakılır (RAII).
+static ACTIVE_REQ: AtomicUsize = AtomicUsize::new(0);
+static REQ_SEQ: AtomicUsize = AtomicUsize::new(0);
+struct Slot;
+impl Drop for Slot {
+    fn drop(&mut self) {
+        ACTIVE_REQ.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+fn throttle() -> Slot {
+    let seq = REQ_SEQ.fetch_add(1, Ordering::Relaxed);
+    std::thread::sleep(Duration::from_millis((seq % 7) as u64 * 25));
+    let mut spins = 0;
+    while ACTIVE_REQ.fetch_add(1, Ordering::SeqCst) >= 10 {
+        ACTIVE_REQ.fetch_sub(1, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(50));
+        spins += 1;
+        if spins > 200 {
+            break;
+        }
+    }
+    Slot
+}
+
+/// Çerez kavanozu: duvarlı uçlar (Yahoo YBV/sB, Qwant datadome, DDG kl/df)
+/// ilk yanıttaki Set-Cookie'yi saklar, sonrakilere Cookie olarak ekler.
+/// Sunucu tarafı HttpOnly çerezleri göremez — görebildikleri yeter.
+static JAR: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+fn jar_get(url: &str) -> Option<String> {
+    let host = host_of(url).to_lowercase();
+    let g = JAR.lock().ok()?;
+    let m = g.as_ref()?;
+    // Alt alan adı da üst kavanozu kullanır (www.qwant.com ← qwant.com).
+    let mut h = host.as_str();
+    loop {
+        if let Some(c) = m.get(h) {
+            return Some(c.clone());
+        }
+        match h.find('.') {
+            Some(i) => h = &h[i + 1..],
+            None => return None,
+        }
+    }
+}
+fn jar_put(url: &str, set_cookie: &str) {
+    let host = host_of(url).to_lowercase();
+    // Sadece ad=değer kısmı (bayrakları at).
+    let pair = set_cookie.split(';').next().unwrap_or("").trim();
+    let name = pair.split('=').next().unwrap_or("").trim();
+    if pair.is_empty() || name.is_empty() || pair.len() > 800 {
+        return;
+    }
+    if let Ok(mut g) = JAR.lock() {
+        let m = g.get_or_insert_with(HashMap::new);
+        // Aynı adlı eskiyi değiştir (yığında birikir yoksa).
+        let cur = m.entry(host).or_default();
+        let parts: Vec<&str> = cur
+            .split("; ")
+            .filter(|p| p.split('=').next().unwrap_or("") != name && !p.is_empty())
+            .collect();
+        *cur = if parts.is_empty() {
+            pair.to_string()
+        } else {
+            format!("{}; {}", parts.join("; "), pair)
+        };
+    }
+}
+
+/// Kavanozlu istek kurucusu: UA + Accept + varsa Cookie (yeniden denenebilir closure'lar için).
+fn jar_request(url: &str) -> ureq::Request {
+    let r = agent()
+        .get(url)
+        .set("User-Agent", ua_rot())
+        .set("Accept", "application/json, text/html")
+        .set("Accept-Charset", "utf-8");
+    match jar_get(url) {
+        Some(c) => r.set("Cookie", &c),
+        None => r,
+    }
+}
+/// Yanıttaki ilk Set-Cookie'yi kavanoza at (yanıtı tüketmez).
+fn jar_store(url: &str, resp: &ureq::Response) {
+    if let Some(sc) = resp.header("set-cookie") {
+        let s = sc.to_string();
+        jar_put(url, &s);
+    }
+}
+
+/// Kavanozlu metin çekimi: Cookie gönderir, Set-Cookie saklar.
+/// Duvarlı uçlar (Yahoo/Qwant/Reddit/DDG-lite) bunu kullanır.
+fn get_text_jar(url: &str) -> Option<String> {
+    with_retry(|| jar_request(url).call())
+        .ok()
+        .and_then(|r| {
+            jar_store(url, &r);
+            r.into_string().ok()
+        })
 }
 
 /// En küçük percent-encode (sorgu için yeterli).
@@ -3267,19 +3379,33 @@ fn parse_yahoo(body: &str) -> Vec<(String, String, String)> {
 
 /// 38) Yahoo arama (anahtarsız HTML, tarayıcı UA).
 fn src_yahoo(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let url = format!(
+        "https://search.yahoo.com/search?p={}&vc=tr&guccounter=1",
+        enc(query)
+    );
+    // 1. adım: 307 bekçisinden çerezleri topla (takip ETME — ara çerezler kaybolur).
+    // ureq yönlendirmeyi hataya çevirir ama başlıklar okunur.
+    let step1 = agent_noredir()
+        .get(&url)
+        .set("User-Agent", ua_rot())
+        .set("Accept", "text/html")
+        .call();
+    match &step1 {
+        Ok(r) => jar_store(&url, r),
+        Err(ureq::Error::Status(_, r)) => jar_store(&url, r),
+        _ => {}
+    }
+    // 2. adım: kavanozluyla normal çek (çerezli 200 döner).
     let Some(body) = with_retry(|| {
-        agent()
-            .get(&format!(
-                "https://search.yahoo.com/search?p={}&vc=tr&guccounter=1",
-                enc(query)
-            ))
-            .set("User-Agent", ua_rot())
-            .set("Accept", "text/html")
+        jar_request(&url)
             .set("Accept-Language", "tr-TR,tr;q=0.9")
             .call()
     })
     .ok()
-    .and_then(|r| r.into_string().ok())
+    .and_then(|r| {
+        jar_store(&url, &r);
+        r.into_string().ok()
+    })
     else {
         return;
     };
@@ -3867,25 +3993,33 @@ fn parse_qwant(body: &str) -> Vec<(String, String, String)> {
 }
 
 /// 43) Qwant arama (anahtarsız JSON, qwant header şart).
+/// Qwant tek atış (kavanozlu): datadome çerezi saklanır.
+fn qwant_once(url: &str) -> Option<String> {
+    with_retry(|| {
+        jar_request(url)
+            .set("Accept", "application/json")
+            .set("Referer", "https://www.qwant.com/")
+            .set("Origin", "https://www.qwant.com/")
+            .call()
+    })
+    .ok()
+    .and_then(|r| {
+        jar_store(url, &r);
+        r.into_string().ok()
+    })
+}
 fn src_qwant(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
     let url = format!(
         // limit artışı: Qwant 8→20
         "https://api.qwant.com/v3/search/web?q={}&count=20&locale=tr_TR&offset=0&device=desktop&safesearch=1",
         enc(query)
     );
-    let Some(body) = with_retry(|| {
-        agent()
-            .get(&url)
-            .set("User-Agent", ua_rot())
-            .set("Accept", "application/json")
-            .set("Referer", "https://www.qwant.com/")
-            .set("Origin", "https://www.qwant.com/")
-            .set("Accept-Charset", "utf-8")
-            .call()
-    })
-    .ok()
-    .and_then(|r| r.into_string().ok())
-    else {
+    // 2 atış: ilki datadome çerezini pişirir, boşsa kavanozluyla tekrar dene.
+    let body = match qwant_once(&url) {
+        Some(b) if !parse_qwant(&b).is_empty() => Some(b),
+        _ => qwant_once(&url),
+    };
+    let Some(body) = body else {
         return;
     };
     let mut n = 0;
@@ -3971,22 +4105,28 @@ fn parse_reddit(body: &str) -> Vec<(String, String, String)> {
     out
 }
 
-/// 44) Reddit arama (anahtarsız JSON, özel UA şart — rotasyon banlanır).
+/// 44) Reddit arama (old.reddit + kavanoz: login'sız JSON'un son şansı).
 fn src_reddit(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
     let url = format!(
         // limit artışı: Reddit 8→12
-        "https://www.reddit.com/search.json?q={}&limit=12&sort=relevance&raw_json=1",
+        "https://old.reddit.com/search.json?q={}&limit=12&sort=relevance&raw_json=1",
         enc(query)
     );
     let Some(body) = with_retry(|| {
-        agent()
+        let b = agent()
             .get(&url)
             .set("User-Agent", "NoralWeb/1.0 (by /u/noral)")
-            .set("Accept", "application/json")
-            .call()
+            .set("Accept", "application/json");
+        match jar_get(&url) {
+            Some(c) => b.set("Cookie", &c).call(),
+            None => b.call(),
+        }
     })
     .ok()
-    .and_then(|r| r.into_string().ok())
+    .and_then(|r| {
+        jar_store(&url, &r);
+        r.into_string().ok()
+    })
     else {
         return;
     };
@@ -4198,7 +4338,7 @@ fn parse_nominatim(body: &str, sorgu: &str) -> Vec<(String, String, String)> {
 fn src_nominatim(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
     let url = format!(
         // limit artışı: Nominatim 5→8
-        "https://nominatim.openstreetmap.org/search?q={}&format=jsonv2&limit=8&accept-language=tr",
+        "https://nominatim.openstreetmap.org/search?q={}&format=jsonv2&limit=8&accept-language=tr&email=noralweb@example.com",
         enc(query)
     );
     let Some(body) = with_retry(|| {
@@ -6535,14 +6675,14 @@ pub fn live_search(query: &str, deep: bool, apx: u8) -> (Vec<Candidate>, Vec<Str
 
     // Suskun kaynaklar (UI'da gri görünür).
     // Google-H: gizli hasat yedeği (main.rs rank öncesi ekler).
-    const BEKLENEN: [&str; 70] = [
+    const BEKLENEN: [&str; 71] = [
         "DuckDuckGo", "Wikipedia-tr", "Wikipedia-en", "WikiTam-tr", "WikiTam-en",
         "Wikidata", "DBpedia", "GitHub", "Stack", "SO-kullanıcı", "HN", "Akademik", "npm",
         "crates", "arXiv", "DDG-Web", "Wiby", "SearXNG", "CC", "Exa", "Tavily", "LangSearch",
         "Bing", "Google", "Google-H", "Marginalia", "GNews", "YouTube", "SemScholar", "Crossref",
         "ORCID", "GDELT", "OpenLib", "Bing-Sosyal",
         "Yahoo", "Ecosia", "BraveWeb", "Yandex", "Qwant", "Reddit",
-        "WikiAra-tr", "WikiAra-en", "Deezer", "Nominatim", "Yandex-H",
+        "WikiAra-tr", "WikiAra-en", "Deezer", "Nominatim", "Yandex-H", "Ecosia-H",
         "GBooks", "EuroPMC", "GitLab", "DockerHub", "HuggingFace",
         "Codeberg", "Maven", "RubyGems", "Packagist", "Hex", "iTunes",
         "PubMed", "NuGet", "PubDev", "MusicBrainz", "TVMaze", "Dailymotion", "PeerTube",
@@ -6719,6 +6859,32 @@ mod tests {
         // çözülemez ck/a atlanır
         let kotu = r#"<li class="b_algo"><h2><a href="/ck/a?!&&p=x&u=a1!!!bozuk!!!&m=y">Kötü</a></h2><p>X</p></li>"#;
         assert!(parse_bing_html(kotu).is_empty());
+    }
+
+    #[test]
+    #[ignore]
+    fn duvar_canli() {
+        // Duvar turu: kavanoz/old.reddit/e-posta yedekleri (hangisi yeşilse kardır).
+        let mut o = Vec::new();
+        let mut s = Vec::new();
+        src_yahoo("rust", &mut o, &mut s);
+        println!("yahoo: {} aday", o.len());
+        let mut o2 = Vec::new();
+        let mut s2 = Vec::new();
+        src_qwant("rust", &mut o2, &mut s2);
+        println!("qwant: {} aday", o2.len());
+        let mut o3 = Vec::new();
+        let mut s3 = Vec::new();
+        src_reddit("rust", &mut o3, &mut s3);
+        println!("reddit: {} aday", o3.len());
+        let mut o4 = Vec::new();
+        let mut s4 = Vec::new();
+        src_nominatim("ankara", &mut o4, &mut s4);
+        println!("nominatim: {} aday", o4.len());
+        assert!(
+            !o.is_empty() || !o2.is_empty() || !o3.is_empty() || !o4.is_empty(),
+            "duvar turu tamamen suskun"
+        );
     }
 
     #[test]

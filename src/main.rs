@@ -811,8 +811,9 @@ fn main() {
                     // Duvar yedekleri: ureq boşsa gizli hasat dene (rank öncesi, paralel).
                     let need_g = !sources.iter().any(|s| s.starts_with("Google("));
                     let need_y = !sources.iter().any(|s| s.starts_with("Yandex("));
-                    let (pg, py) = (proxy.clone(), proxy.clone());
-                    let (qg, qy) = (query.clone(), query.clone());
+                    let need_e = !sources.iter().any(|s| s.starts_with("Ecosia("));
+                    let (pg, py, pe) = (proxy.clone(), proxy.clone(), proxy.clone());
+                    let (qg, qy, qe) = (query.clone(), query.clone(), query.clone());
                     let hg = std::thread::spawn(move || {
                         if need_g {
                             let url = format!(
@@ -835,8 +836,20 @@ fn main() {
                             (Vec::new(), None)
                         }
                     });
+                    let he = std::thread::spawn(move || {
+                        if need_e {
+                            let url = format!(
+                                "https://www.ecosia.org/search?q={}",
+                                fetch::enc(&qe)
+                            );
+                            harvest_page_blocking(&pe, url, "Ecosia-H")
+                        } else {
+                            (Vec::new(), None)
+                        }
+                    });
                     let (h_g, n_g) = hg.join().unwrap_or_default();
                     let (h_y, n_y) = hy.join().unwrap_or_default();
+                    let (h_e, n_e) = he.join().unwrap_or_default();
                     let mut merge = |h: Vec<(String, String)>,
                                      neden: Option<String>,
                                      etiket: &str,
@@ -863,6 +876,7 @@ fn main() {
                     };
                     merge(h_g, n_g, "Google-H", "harvest-google");
                     merge(h_y, n_y, "Yandex-H", "harvest-yandex");
+                    merge(h_e, n_e, "Ecosia-H", "harvest-ecosia");
                     let was_cached = false;
                     let offline = cands.is_empty();
                     let cands = if offline {
