@@ -1,0 +1,42 @@
+name: android
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TAG: v0.37.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: NDK clang bul
+        run: |
+          NDK=$(ls -d /usr/local/lib/android/sdk/ndk/* 2>/dev/null | sort -V | tail -1)
+          echo "NDK: $NDK"
+          BIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+          ls $BIN | grep -E "^aarch64-linux-android[0-9]+-clang$" || true
+          CLANG=$(ls $BIN/aarch64-linux-android??-clang 2>/dev/null | sort -t- -k3 -n | tail -1)
+          if [ -z "$CLANG" ]; then CLANG=$BIN/aarch64-linux-android-clang; fi
+          echo "CLANG: $CLANG"
+          test -x "$CLANG"
+          echo "CLANG=$CLANG" >> $GITHUB_ENV
+      - name: Rust Android hedefi
+        run: rustup target add aarch64-linux-android
+      - name: CLI (aarch64-linux-android)
+        env:
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ env.CLANG }}
+          CC_aarch64_linux_android: ${{ env.CLANG }}
+        run: |
+          cargo build --release --manifest-path cli/Cargo.toml --target aarch64-linux-android
+          cp cli/target/aarch64-linux-android/release/noral-cli noral-cli-android-arm64
+          file noral-cli-android-arm64
+          ls -la noral-cli-android-arm64
+      - name: Release'e yukle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$TAG" noral-cli-android-arm64 --clobber
+          gh release view "$TAG" --json assets --jq '.assets[].name'

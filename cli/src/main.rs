@@ -222,7 +222,15 @@ fn open_url(u: &str) {
     {
         let _ = std::process::Command::new("open").arg(u).spawn();
     }
-    #[cfg(all(not(windows), not(target_os = "macos")))]
+    #[cfg(target_os = "android")]
+    {
+        // Termux: termux-open yoksa sessizce xdg-open dene.
+        let ok = std::process::Command::new("termux-open").arg(u).spawn().is_ok();
+        if !ok {
+            let _ = std::process::Command::new("xdg-open").arg(u).spawn();
+        }
+    }
+    #[cfg(all(not(windows), not(target_os = "macos"), not(target_os = "android")))]
     {
         let _ = std::process::Command::new("xdg-open").arg(u).spawn();
     }
