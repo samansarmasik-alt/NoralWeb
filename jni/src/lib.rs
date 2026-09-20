@@ -393,6 +393,17 @@ pub extern "system" fn Java_com_noralweb_Core_init(
         let p = std::path::PathBuf::from(&d);
         let _ = std::fs::create_dir_all(&p);
         let _ = std::env::set_current_dir(&p);
+        // Rust paniği prosesi öldürür; ölmeden sebebi dosyaya bırak (sonraki açılışta gösterilir).
+        let yakala = d.clone();
+        std::panic::set_hook(Box::new(move |bilgi| {
+            let mut m = String::from("RUST PANIC: ");
+            m.push_str(&bilgi.to_string());
+            if let Some(konum) = bilgi.location() {
+                m.push_str(&format!(" @ {}:{}", konum.file(), konum.line()));
+            }
+            let _ = std::fs::create_dir_all(&yakala);
+            let _ = std::fs::write(std::path::PathBuf::from(&yakala).join("panic.log"), m);
+        }));
     }
 }
 
