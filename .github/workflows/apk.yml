@@ -41,19 +41,29 @@ jobs:
           mkdir -p android/app/src/main/jniLibs/arm64-v8a
           cp jni/target/aarch64-linux-android/release/libnoralcore.so android/app/src/main/jniLibs/arm64-v8a/
           file android/app/src/main/jniLibs/arm64-v8a/libnoralcore.so
+      - name: Imza anahtari coz
+        env:
+          NORAL_KEYSTORE_B64: ${{ secrets.NORAL_KEYSTORE_B64 }}
+        run: |
+          echo "$NORAL_KEYSTORE_B64" | base64 -d > /tmp/noral-release.jks
+          echo "NORAL_KEYSTORE=/tmp/noral-release.jks" >> $GITHUB_ENV
       - name: Gradle kur
         run: |
           curl -fsSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
           unzip -q /tmp/gradle.zip -d /tmp
           echo "/tmp/gradle-8.7/bin" >> $GITHUB_PATH
       - name: APK derle
+        env:
+          NORAL_KEYSTORE: ${{ env.NORAL_KEYSTORE }}
+          NORAL_STORE_PASS: ${{ secrets.NORAL_STORE_PASS }}
+          NORAL_KEY_PASS: ${{ secrets.NORAL_KEY_PASS }}
         run: |
           cd android
-          gradle :app:assembleDebug --no-daemon
-          ls -la app/build/outputs/apk/debug/
+          gradle :app:assembleRelease --no-daemon
+          ls -la app/build/outputs/apk/release/
       - name: APK dogrula
         run: |
-          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          APK=android/app/build/outputs/apk/release/app-release.apk
           unzip -l $APK | grep -E "lib/arm64-v8a/libnoralcore.so|assets/index.html|classes.dex"
           AAPT=$(ls /usr/local/lib/android/sdk/build-tools/*/aapt 2>/dev/null | sort -V | tail -1)
           "$AAPT" dump badging $APK | head -2
@@ -61,6 +71,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk NoralWeb-android.apk
+          cp android/app/build/outputs/apk/release/app-release.apk NoralWeb-android.apk
           gh release upload "$TAG" NoralWeb-android.apk --clobber
           gh release view "$TAG" --json assets --jq '.assets[].name'

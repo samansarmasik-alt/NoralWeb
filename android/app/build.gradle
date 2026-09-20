@@ -10,7 +10,7 @@ android {
         applicationId 'com.noralweb'
         minSdk 26
         targetSdk 34
-        versionCode 38
+        versionCode 39
         versionName '0.37.0'
     }
 
@@ -19,7 +19,21 @@ android {
             // CI imzası yok: debug APK doğrudan kurulur.
         }
         release {
-            signingConfig signingConfigs.debug
+            // Kalıcı imza secret'tan gelirse kullanılır (güncellemeler üst üste kurulur),
+            // yoksa (yerel derleme) debug imzası düşer.
+            signingConfig System.getenv("NORAL_KEYSTORE") != null ? signingConfigs.surum : signingConfigs.debug
+        }
+    }
+
+    // Secret yoksa boş kalır ve kullanılmaz (doğrulama yalnızca seçilende yapılır).
+    signingConfigs {
+        surum {
+            if (System.getenv("NORAL_KEYSTORE") != null) {
+                storeFile file(System.getenv("NORAL_KEYSTORE"))
+                storePassword System.getenv("NORAL_STORE_PASS")
+                keyAlias 'noral'
+                keyPassword System.getenv("NORAL_KEY_PASS")
+            }
         }
     }
 
