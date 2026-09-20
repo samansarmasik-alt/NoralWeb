@@ -14,18 +14,8 @@ android {
         versionName '0.37.0'
     }
 
-    buildTypes {
-        debug {
-            // CI imzası yok: debug APK doğrudan kurulur.
-        }
-        release {
-            // Kalıcı imza secret'tan gelirse kullanılır (güncellemeler üst üste kurulur),
-            // yoksa (yerel derleme) debug imzası düşer.
-            signingConfig System.getenv("NORAL_KEYSTORE") != null ? signingConfigs.surum : signingConfigs.debug
-        }
-    }
-
     // Secret yoksa boş kalır ve kullanılmaz (doğrulama yalnızca seçilende yapılır).
+    // buildTypes'tan ÖNCE olmalı (Gradle konfigürasyon sırası).
     signingConfigs {
         surum {
             if (System.getenv("NORAL_KEYSTORE") != null) {
@@ -34,6 +24,17 @@ android {
                 keyAlias 'noral'
                 keyPassword System.getenv("NORAL_KEY_PASS")
             }
+        }
+    }
+
+    buildTypes {
+        debug {
+            // CI imzası yok: debug APK doğrudan kurulur.
+        }
+        release {
+            // Kalıcı imza secret'tan gelirse kullanılır (güncellemeler üst üste kurulur),
+            // yoksa (yerel derleme) debug imzası düşer.
+            signingConfig System.getenv("NORAL_KEYSTORE") != null ? signingConfigs.surum : signingConfigs.debug
         }
     }
 
