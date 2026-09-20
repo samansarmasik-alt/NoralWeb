@@ -551,7 +551,24 @@ function syncHst(){$("hstBtn").classList.toggle("off",!HST)}
 syncHst();
 $("hstBtn").onclick=()=>{HST=!HST;syncHst();
   try{localStorage.setItem("noral_harvest",HST?"1":"0")}catch(e){}};
-function hl(s){let o=esc(s);for(const t of lastTerms){try{o=o.replace(new RegExp("("+t.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+")","ig"),"<mark>$1</mark>")}catch(e){}}return o}
+function foldT(s){return String(s==null?"":s).toLowerCase().replace(/̇/g,"")
+  .replace(/ç/g,"c").replace(/ğ/g,"g").replace(/ı/g,"i")
+  .replace(/ö/g,"o").replace(/ş/g,"s").replace(/ü/g,"u")}
+function levJS(a,b){a=String(a);b=String(b);var n=a.length,m=b.length;if(!n)return m;if(!m)return n;
+  var d=[],i,j;for(i=0;i<=n;i++){d[i]=[i]}for(j=0;j<=m;j++)d[0][j]=j;
+  for(i=1;i<=n;i++)for(j=1;j<=m;j++){var c=a[i-1]===b[j-1]?0:1;var v=Math.min(d[i-1][j-1]+c,d[i-1][j]+1,d[i][j-1]+1);
+    if(i>1&&j>1&&a[i-1]===b[j-2]&&a[i-2]===b[j-1])v=Math.min(v,d[i-2][j-2]+1);d[i][j]=v}
+  return d[n][m]}
+function hl(s){var o=esc(s);if(!lastTerms.length)return o;
+  return o.replace(/[A-Za-zÇĞİÖŞÜçğıöşü0-9]+/g,function(w,off){
+    if(o[off-1]==="&"&&o.slice(off+w.length,off+w.length+1)===";")return w;
+    var f=foldT(w);
+    for(var k=0;k<lastTerms.length;k++){var ft=foldT(lastTerms[k]);if(!ft)continue;
+      if(f===ft||(f.length>=3&&ft.length>=3&&(f.indexOf(ft)===0||ft.indexOf(f)===0)))return "<mark>"+w+"</mark>";
+      var dl=Math.abs(f.length-ft.length);if(dl>2)continue;
+      var m=Math.max(f.length,ft.length);if(m<4)continue;
+      if(1-levJS(f,ft)/m>=0.8)return "<mark>"+w+"</mark>"}
+    return w})}
 function copyText(t){t=String(t==null?"":t);
   const ok=()=>{try{$("stxt").textContent=T("copied")}catch(e){}};
   if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(ok,()=>fallbackCopy(t,ok))}

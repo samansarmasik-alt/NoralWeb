@@ -82,6 +82,100 @@ pub trait RankEngine {
 /// Varsayılan motor: BM25-lite + kosinüs, otorite çarpanı ayrı uygulanır.
 pub struct NeuralRank;
 
+/// Türkçe körüksüz katlama: ö→o, ü→u, ı→i, ş→s, ğ→g, ç→c (I/İ→i).
+/// ASCII yazan kullanıcı ("ozbalci") ile gerçek metin ("özbalcı") buluşur.
+pub fn fold_tr(s: &str) -> String {
+    let mut o = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            'ç' | 'Ç' => o.push('c'),
+            'ğ' | 'Ğ' => o.push('g'),
+            'ı' | 'I' | 'İ' => o.push('i'),
+            'ö' | 'Ö' => o.push('o'),
+            'ş' | 'Ş' => o.push('s'),
+            'ü' | 'Ü' => o.push('u'),
+            _ => o.push(c.to_lowercase().next().unwrap_or(c)),
+        }
+    }
+    o
+}
+
+/// Karakter uzaklığı: Damerau-OSA (bitişik harf takası 1 sayılır: "pyhton"→"python").
+/// Kısa tokenlar için tam matris.
+pub fn lev(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
+    let (n, m) = (a.len(), b.len());
+    let mut d = vec![vec![0usize; m + 1]; n + 1];
+    for i in 0..=n {
+        d[i][0] = i;
+    }
+    for j in 0..=m {
+        d[0][j] = j;
+    }
+    for i in 1..=n {
+        for j in 1..=m {
+            let sub = d[i - 1][j - 1] + usize::from(a[i - 1] != b[j - 1]);
+            let mut best = sub.min(d[i - 1][j] + 1).min(d[i][j - 1] + 1);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                best = best.min(d[i - 2][j - 2] + 1);
+            }
+            d[i][j] = best;
+        }
+    }
+    d[n][m]
+}
+
+/// Katlanmış benzerlik 0..1 (1 = aynı).
+pub fn sim(a: &str, b: &str) -> f64 {
+    let (fa, fb) = (fold_tr(a), fold_tr(b));
+    let m = fa.chars().count().max(fb.chars().count());
+    if m == 0 {
+        return 1.0;
+    }
+    1.0 - lev(&fa, &fb) as f64 / m as f64
+}
+
+/// Sorgu terimlerinin metindeki en iyi bulanık karşılığı (0..1 ortalama).
+/// Katlama sonrası birebirler 1.0 alır; 1-2 harf farklılar 0.8+ ile yakalanır.
+pub fn fuzzy_cov(query_terms: &[String], text: &str) -> f64 {
+    if query_terms.is_empty() {
+        return 0.0;
+    }
+    let toks: Vec<String> = fold_tr(text)
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    if toks.is_empty() {
+        return 0.0;
+    }
+    let mut top = 0.0;
+    for q in query_terms {
+        let mut best = 0.0;
+        for t in &toks {
+            // Uzunluk farkı büyükse lev'e girme (hız + yanlış pozitif freni).
+            let (ql, tl) = (q.chars().count(), t.chars().count());
+            if ql.max(tl) > 2 * (ql.min(tl) + 1) {
+                continue;
+            }
+            let m = ql.max(tl);
+            let s = 1.0 - lev(q, t) as f64 / m as f64;
+            if s > best {
+                best = s;
+            }
+        }
+        top += best;
+    }
+    top / query_terms.len() as f64
+}
+
 impl NeuralRank {
     pub fn authority(source: &str) -> f64 {
         match source {
@@ -118,7 +212,7 @@ impl NeuralRank {
     }
 
     fn term_hits(query_terms: &[String], text: &str) -> f64 {
-        let t = text.to_lowercase();
+        let t = fold_tr(text);
         query_terms
             .iter()
             .map(|q| {
@@ -170,34 +264,36 @@ impl RankEngine for NeuralRank {
     fn score(&self, query_terms: &[String], c: &Candidate) -> (f64, f64) {
         let title = Self::term_hits(query_terms, &c.title) * 2.0;
         let body = Self::term_hits(query_terms, &c.snippet);
-        let bm25 = title + body;
+        // Bulanık kapı: 1-2 harf farklı yazımlar (typo, körüksüz Türkçe) skora girer.
+        let fuzzy = fuzzy_cov(query_terms, &format!("{} {}", c.title, c.snippet)) * 2.0;
+        let bm25 = title + body + fuzzy;
         let combined = format!("{} {}", c.title, c.snippet);
         let cos = Self::cosine(query_terms, &combined);
         (bm25, cos)
     }
 }
 
-/// Türkçe-uyumlu basit tokenizer: küçük harf (I→ı dahil), alfanümerik dışı ayraç.
+/// Türkçe-uyumlu tokenizer: körüksüz katlama + alfanümerik dışı ayraç.
 pub fn tokenize(q: &str) -> Vec<String> {
-    q.to_lowercase()
+    fold_tr(q)
         .split(|ch: char| !ch.is_alphanumeric())
         .filter(|s| s.chars().count() > 2)
         .map(|s| s.to_string())
         .collect()
 }
 
-/// Normalize: küçük harf, ayraçlar tek boşluk ("Berkcan-Özbalci" → "berkcan özbalci").
+/// Normalize: katlanmış küçük harf, ayraçlar tek boşluk.
 pub fn normalize(s: &str) -> String {
-    s.to_lowercase()
+    fold_tr(s)
         .split(|ch: char| !ch.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-/// Bitişik: sadece alfanümerik küçük ("Berkcan Özbalci" → "berkcanozbalci").
+/// Bitişik: katlanmış alfanümerik ("Berkcan Özbalcı" → "berkcanozbalci").
 pub fn squished(s: &str) -> String {
-    s.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect()
+    fold_tr(s).chars().filter(|c| c.is_alphanumeric()).collect()
 }
 
 /// Skorla + nöral ağdan geçir + sırala + MMR çeşitlendir.
@@ -235,8 +331,8 @@ pub fn rank<E: RankEngine>(
             let (title_cov, snip_cov) = if terms.is_empty() {
                 (0.0, 0.0)
             } else {
-                let t = c.title.to_lowercase();
-                let s = c.snippet.to_lowercase();
+                let t = fold_tr(&c.title);
+                let s = fold_tr(&c.snippet);
                 (
                     terms.iter().filter(|q| t.contains(q.as_str())).count() as f64
                         / terms.len() as f64,
@@ -274,7 +370,7 @@ pub fn rank<E: RankEngine>(
             let all_terms = if terms.is_empty() {
                 0.0
             } else {
-                let hay = format!("{} {}", c.title.to_lowercase(), c.snippet.to_lowercase());
+                let hay = format!("{} {}", fold_tr(&c.title), fold_tr(&c.snippet));
                 terms.iter().filter(|q| hay.contains(q.as_str())).count() as f64
                     / terms.len() as f64
             };
@@ -435,6 +531,65 @@ mod tests {
             &cand("en iyi kedi maması", "https://x.com", "kedi maması seçimi", "ddg"),
         );
         assert!(cos > 0.3);
+    }
+
+    #[test]
+    fn katlama_esitler() {
+        assert_eq!(fold_tr("Özbalcı"), "ozbalci");
+        assert_eq!(fold_tr("IĞDIR Çankırı"), "igdir cankiri");
+        assert_eq!(fold_tr("ÜŞENGEÇ"), "usengec");
+    }
+
+    #[test]
+    fn lev_dogrulugu() {
+        assert_eq!(lev("kitap", "kitap"), 0);
+        assert_eq!(lev("kitap", "kita"), 1);
+        assert_eq!(lev("abc", "xyz"), 3);
+        // Bitişik takas tek sayılır.
+        assert_eq!(lev("pyhton", "python"), 1);
+        assert!(sim("rust", "ruts") > 0.7);
+    }
+
+    #[test]
+    fn ascii_sorgu_koruklu_sonucu_bulur() {
+        // SENARYO 1: kullanıcı körüksüz yazdı ("ozbalci"), sonuç körüklü ("Özbalcı").
+        let r = rank(
+            &NeuralRank,
+            &crate::neural::net(),
+            "berkcan ozbalci",
+            vec![
+                cand("günlük burçlar", "https://a.com/1", "bugün koç burcu", "bing"),
+                cand(
+                    "Berkcan Özbalcı",
+                    "https://b.com/2",
+                    "Berkcan Özbalcı projeleri",
+                    "github",
+                ),
+            ],
+        );
+        assert!(r[0].url.contains("b.com"), "körüksüz sorgu kaybetti");
+        assert!(r[0].detail.bm25 > r[1].detail.bm25);
+    }
+
+    #[test]
+    fn typo_toleransi() {
+        // SENARYO 2: tek harf kayması ("pyhton" → "Python").
+        assert!(fuzzy_cov(&tokenize("pyhton"), "python dili") > 0.5);
+        let r = rank(
+            &NeuralRank,
+            &crate::neural::net(),
+            "pyhton programlama",
+            vec![
+                cand("araba fiyatları", "https://a.com/1", "ikinci el ilanlar", "bing"),
+                cand(
+                    "Python programlama rehberi",
+                    "https://b.com/2",
+                    "python öğren",
+                    "bing",
+                ),
+            ],
+        );
+        assert!(r[0].url.contains("b.com"), "typo'lu sorgu kaybetti");
     }
 
     #[test]

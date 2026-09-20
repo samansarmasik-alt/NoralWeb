@@ -4231,6 +4231,1876 @@ fn src_nominatim(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String
     }
 }
 
+/// 48) Google Books — kitap araması (anahtarsız).
+fn parse_gbooks(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("items").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(10) {
+        let vi = it.get("volumeInfo").unwrap_or(it);
+        let baslik = vi.get("title").and_then(|x| x.as_str()).unwrap_or("");
+        let baglanti = vi.get("infoLink").and_then(|x| x.as_str()).unwrap_or("");
+        if baslik.trim().is_empty() || baglanti.is_empty() {
+            continue;
+        }
+        if !(baglanti.starts_with("http://") || baglanti.starts_with("https://")) {
+            continue;
+        }
+        let dusuk = baglanti.to_lowercase();
+        if BAD_EXT.iter().any(|e| dusuk.contains(e)) {
+            continue;
+        }
+        let yazarlar: Vec<String> = vi
+            .get("authors")
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter()
+                    .take(3)
+                    .filter_map(|y| y.as_str())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let aciklama = vi.get("description").and_then(|x| x.as_str()).unwrap_or("");
+        let kisalt: String = aciklama.chars().take(300).collect();
+        let parca = match (yazarlar.is_empty(), kisalt.is_empty()) {
+            (true, true) => "Google Books kitabı".to_string(),
+            (true, false) => kisalt,
+            (false, true) => yazarlar.join(", "),
+            (false, false) => format!("{} · {}", yazarlar.join(", "), kisalt),
+        };
+        out.push((baslik.to_string(), baglanti.to_string(), parca));
+        if out.len() >= 10 {
+            break;
+        }
+    }
+    out
+}
+
+/// 48) Google Books (anahtarsız JSON).
+fn src_gbooks(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://www.googleapis.com/books/v1/volumes?q={}&maxResults=10",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_gbooks(&body).into_iter().take(10) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "gbooks".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("GBooks({})", n));
+    }
+}
+
+/// 49) Europe PMC — biyomedikal makaleler (anahtarsız).
+fn parse_europepmc(body: &str, sorgu: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v
+        .get("resultList")
+        .and_then(|r| r.get("result"))
+        .and_then(|x| x.as_array())
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(10) {
+        let baslik = it.get("title").and_then(|x| x.as_str()).unwrap_or("");
+        if baslik.trim().is_empty() {
+            continue;
+        }
+        let doi = it.get("doi").and_then(|x| x.as_str()).unwrap_or("").trim();
+        let baglanti = if doi.is_empty() {
+            format!("https://europepmc.org/search?query={}", enc(sorgu))
+        } else {
+            let temiz = doi
+                .trim_start_matches("https://doi.org/")
+                .trim_start_matches("http://doi.org/")
+                .trim_start_matches("doi:");
+            format!("https://doi.org/{}", temiz)
+        };
+        if !(baglanti.starts_with("http://") || baglanti.starts_with("https://")) {
+            continue;
+        }
+        let yazar = it.get("authorString").and_then(|x| x.as_str()).unwrap_or("");
+        let parca = if yazar.trim().is_empty() {
+            "Europe PMC makalesi".to_string()
+        } else {
+            yazar.chars().take(300).collect()
+        };
+        out.push((baslik.to_string(), baglanti, parca));
+        if out.len() >= 10 {
+            break;
+        }
+    }
+    out
+}
+
+/// 49) Europe PMC (anahtarsız JSON).
+fn src_europepmc(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query={}&format=json&resultType=lite&pageSize=10",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_europepmc(&body, query).into_iter().take(10) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "europepmc".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("EuroPMC({})", n));
+    }
+}
+
+/// 51) GitLab — proje araması (anahtarsız, çıplak dizi).
+fn parse_gitlab(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(8) {
+        let (ad, bag, acik) = (
+            it.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("web_url").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("description").and_then(|x| x.as_str()).unwrap_or(""),
+        );
+        if ad.trim().is_empty() || bag.is_empty() {
+            continue;
+        }
+        if !(bag.starts_with("http://") || bag.starts_with("https://")) {
+            continue;
+        }
+        let dusuk = bag.to_lowercase();
+        if BAD_EXT.iter().any(|e| dusuk.contains(e)) {
+            continue;
+        }
+        let parca = if acik.trim().is_empty() {
+            "GitLab projesi".to_string()
+        } else {
+            acik.chars().take(300).collect()
+        };
+        out.push((ad.to_string(), bag.to_string(), parca));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// 51) GitLab (anahtarsız JSON).
+fn src_gitlab(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://gitlab.com/api/v4/projects?search={}&per_page=8",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_gitlab(&body).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "gitlab".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("GitLab({})", n));
+    }
+}
+
+/// 52) Docker Hub — imaj araması (anahtarsız).
+fn parse_dockerhub(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("results").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(8) {
+        let ad = it.get("repo_name").and_then(|x| x.as_str()).unwrap_or("");
+        if ad.trim().is_empty() {
+            continue;
+        }
+        let acik = it
+            .get("short_description")
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        let parca = if acik.trim().is_empty() {
+            "Docker Hub imajı".to_string()
+        } else {
+            acik.chars().take(300).collect()
+        };
+        out.push((
+            ad.to_string(),
+            format!("https://hub.docker.com/r/{}", ad),
+            parca,
+        ));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// 52) Docker Hub (anahtarsız JSON).
+fn src_dockerhub(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://hub.docker.com/v2/search/repositories/?query={}&page_size=8",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_dockerhub(&body).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "dockerhub".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("DockerHub({})", n));
+    }
+}
+
+/// 53) Hugging Face — model + veri seti gövdesinden (kimlik, beğeni, etiket) çıkarır.
+fn parse_hf(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(5) {
+        let kimlik = it.get("id").and_then(|x| x.as_str()).unwrap_or("");
+        if kimlik.trim().is_empty() {
+            continue;
+        }
+        let begeni = it.get("likes").and_then(|x| x.as_u64()).unwrap_or(0);
+        let etiketler: Vec<String> = it
+            .get("tags")
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter()
+                    .take(3)
+                    .filter_map(|t| t.as_str())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let parca = match (etiketler.is_empty(), begeni == 0) {
+            (true, true) => "Hugging Face kaydı".to_string(),
+            (true, false) => format!("♥ {} beğeni", begeni),
+            (false, true) => etiketler.join(", "),
+            (false, false) => format!("♥ {} · {}", begeni, etiketler.join(", ")),
+        };
+        out.push((
+            kimlik.to_string(),
+            format!("https://huggingface.co/{}", kimlik),
+            parca,
+        ));
+        if out.len() >= 5 {
+            break;
+        }
+    }
+    out
+}
+
+/// 53) Hugging Face model + veri seti (iki istek tek fns, anahtarsız).
+fn src_huggingface(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let mut n = 0;
+    if let Some(body) = get_text(&format!(
+        "https://huggingface.co/api/models?search={}&limit=5",
+        enc(query)
+    )) {
+        for (ti, ur, sn) in parse_hf(&body).into_iter().take(5) {
+            out.push(Candidate {
+                title: ti,
+                url: ur,
+                snippet: sn,
+                source: "huggingface".into(),
+                depth: 0,
+                page: String::new(),
+            });
+            n += 1;
+        }
+    }
+    if let Some(body) = get_text(&format!(
+        "https://huggingface.co/api/datasets?search={}&limit=5",
+        enc(query)
+    )) {
+        for (ti, ur, sn) in parse_hf(&body).into_iter().take(5) {
+            out.push(Candidate {
+                title: ti,
+                url: ur,
+                snippet: sn,
+                source: "huggingface".into(),
+                depth: 0,
+                page: String::new(),
+            });
+            n += 1;
+        }
+    }
+    if n > 0 {
+        sources.push(format!("HuggingFace({})", n));
+    }
+}
+
+/// 54) Codeberg — repo araması (sarmalayıcılı data, anahtarsız).
+fn parse_codeberg(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("data").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(8) {
+        let (ad, bag, acik) = (
+            it.get("full_name").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("html_url").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("description").and_then(|x| x.as_str()).unwrap_or(""),
+        );
+        if ad.trim().is_empty() || bag.is_empty() {
+            continue;
+        }
+        if !(bag.starts_with("http://") || bag.starts_with("https://")) {
+            continue;
+        }
+        let dusuk = bag.to_lowercase();
+        if BAD_EXT.iter().any(|e| dusuk.contains(e)) {
+            continue;
+        }
+        let parca = if acik.trim().is_empty() {
+            "Codeberg reposu".to_string()
+        } else {
+            acik.chars().take(300).collect()
+        };
+        out.push((ad.to_string(), bag.to_string(), parca));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// 54) Codeberg (anahtarsız JSON).
+fn src_codeberg(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://codeberg.org/api/v1/repos/search?q={}&limit=8",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_codeberg(&body).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "codeberg".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("Codeberg({})", n));
+    }
+}
+
+/// 55) Maven Central — Java paketi araması (anahtarsız).
+fn parse_maven(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v
+        .get("response")
+        .and_then(|r| r.get("docs"))
+        .and_then(|x| x.as_array())
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(8) {
+        let (g, a) = (
+            it.get("g").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("a").and_then(|x| x.as_str()).unwrap_or(""),
+        );
+        if g.trim().is_empty() || a.trim().is_empty() {
+            continue;
+        }
+        let surum = it
+            .get("latestVersion")
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        let baglanti = if surum.is_empty() {
+            format!("https://central.sonatype.com/artifact/{}/{}", g, a)
+        } else {
+            format!("https://central.sonatype.com/artifact/{}/{}/{}", g, a, surum)
+        };
+        let parca = if surum.is_empty() {
+            "Maven paketi".to_string()
+        } else {
+            format!("Maven · {}", surum)
+        };
+        out.push((format!("{}:{}", g, a), baglanti, parca));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// 55) Maven (anahtarsız JSON).
+fn src_maven(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://search.maven.org/solrsearch/select?q={}&rows=8&wt=json",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_maven(&body).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "maven".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("Maven({})", n));
+    }
+}
+
+/// 56) RubyGems — gem araması (anahtarsız, çıplak dizi).
+fn parse_rubygems(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(8) {
+        let ad = it.get("name").and_then(|x| x.as_str()).unwrap_or("");
+        if ad.trim().is_empty() {
+            continue;
+        }
+        let surum = it.get("version").and_then(|x| x.as_str()).unwrap_or("");
+        let ham = it.get("project_uri").and_then(|x| x.as_str()).unwrap_or("");
+        let baglanti = if ham.starts_with("http://") || ham.starts_with("https://") {
+            ham.to_string()
+        } else {
+            format!("https://rubygems.org/gems/{}", ad)
+        };
+        let dusuk = baglanti.to_lowercase();
+        if BAD_EXT.iter().any(|e| dusuk.contains(e)) {
+            continue;
+        }
+        let bilgi = it.get("info").and_then(|x| x.as_str()).unwrap_or("");
+        let parca = if bilgi.trim().is_empty() {
+            "Ruby gemi".to_string()
+        } else {
+            bilgi.chars().take(300).collect()
+        };
+        let baslik = if surum.is_empty() {
+            ad.to_string()
+        } else {
+            format!("{} {}", ad, surum)
+        };
+        out.push((baslik, baglanti, parca));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// 56) RubyGems (anahtarsız JSON).
+fn src_rubygems(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://rubygems.org/api/v1/search.json?query={}",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_rubygems(&body).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "rubygems".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("RubyGems({})", n));
+    }
+}
+
+/// 57) Packagist — PHP paketi araması (anahtarsız).
+fn parse_packagist(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("results").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(8) {
+        let (ad, bag, acik) = (
+            it.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("url").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("description").and_then(|x| x.as_str()).unwrap_or(""),
+        );
+        if ad.trim().is_empty() || bag.is_empty() {
+            continue;
+        }
+        if !(bag.starts_with("http://") || bag.starts_with("https://")) {
+            continue;
+        }
+        let dusuk = bag.to_lowercase();
+        if BAD_EXT.iter().any(|e| dusuk.contains(e)) {
+            continue;
+        }
+        let parca = if acik.trim().is_empty() {
+            "Packagist paketi".to_string()
+        } else {
+            acik.chars().take(300).collect()
+        };
+        out.push((ad.to_string(), bag.to_string(), parca));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// 57) Packagist (anahtarsız JSON).
+fn src_packagist(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://packagist.org/search.json?q={}&per_page=8",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_packagist(&body).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "packagist".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("Packagist({})", n));
+    }
+}
+
+/// 58) Hex — Elixir paketi araması (anahtarsız, çıplak dizi).
+fn parse_hex(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(8) {
+        let ad = it.get("name").and_then(|x| x.as_str()).unwrap_or("");
+        if ad.trim().is_empty() {
+            continue;
+        }
+        let acik = it
+            .get("meta")
+            .and_then(|m| m.get("description"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        let parca = if acik.trim().is_empty() {
+            "Hex paketi".to_string()
+        } else {
+            acik.chars().take(300).collect()
+        };
+        out.push((
+            ad.to_string(),
+            format!("https://hex.pm/packages/{}", ad),
+            parca,
+        ));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// 58) Hex (anahtarsız JSON).
+fn src_hex(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://hex.pm/api/packages?search={}",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_hex(&body).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "hex".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("Hex({})", n));
+    }
+}
+
+/// 59) iTunes — podcast + müzik gövdesinden (parça, sanatçı, bağlantı) çıkarır.
+fn parse_itunes(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("results").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(5) {
+        let parca_adi = it.get("trackName").and_then(|x| x.as_str()).unwrap_or("");
+        let derleme = it
+            .get("collectionName")
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        let sanatci = it.get("artistName").and_then(|x| x.as_str()).unwrap_or("");
+        let baglanti = it
+            .get("trackViewUrl")
+            .and_then(|x| x.as_str())
+            .or_else(|| it.get("collectionViewUrl").and_then(|x| x.as_str()))
+            .unwrap_or("");
+        if baglanti.is_empty() {
+            continue;
+        }
+        if !(baglanti.starts_with("http://") || baglanti.starts_with("https://")) {
+            continue;
+        }
+        let dusuk = baglanti.to_lowercase();
+        if BAD_EXT.iter().any(|e| dusuk.contains(e)) {
+            continue;
+        }
+        // Parça adı yoksa derleme adına düş — ikisi de yoksa atla.
+        let baslik = if parca_adi.trim().is_empty() {
+            if derleme.trim().is_empty() {
+                continue;
+            }
+            if sanatci.trim().is_empty() {
+                derleme.to_string()
+            } else {
+                format!("{} – {}", derleme, sanatci)
+            }
+        } else if sanatci.trim().is_empty() {
+            parca_adi.to_string()
+        } else {
+            format!("{} – {}", parca_adi, sanatci)
+        };
+        let parca = if derleme.trim().is_empty() {
+            if sanatci.trim().is_empty() {
+                "iTunes kaydı".to_string()
+            } else {
+                sanatci.to_string()
+            }
+        } else {
+            derleme.chars().take(300).collect()
+        };
+        out.push((baslik, baglanti.to_string(), parca));
+        if out.len() >= 5 {
+            break;
+        }
+    }
+    out
+}
+
+/// 59) iTunes podcast + müzik (iki istek tek fns, anahtarsız).
+fn src_itunes(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let mut n = 0;
+    if let Some(body) = get_text(&format!(
+        "https://itunes.apple.com/search?term={}&media=podcast&entity=podcast&limit=5&country=US",
+        enc(query)
+    )) {
+        for (ti, ur, sn) in parse_itunes(&body).into_iter().take(5) {
+            out.push(Candidate {
+                title: ti,
+                url: ur,
+                snippet: sn,
+                source: "itunes".into(),
+                depth: 0,
+                page: String::new(),
+            });
+            n += 1;
+        }
+    }
+    if let Some(body) = get_text(&format!(
+        "https://itunes.apple.com/search?term={}&media=music&entity=song&limit=5&country=US",
+        enc(query)
+    )) {
+        for (ti, ur, sn) in parse_itunes(&body).into_iter().take(5) {
+            out.push(Candidate {
+                title: ti,
+                url: ur,
+                snippet: sn,
+                source: "itunes".into(),
+                depth: 0,
+                page: String::new(),
+            });
+            n += 1;
+        }
+    }
+    if n > 0 {
+        sources.push(format!("iTunes({})", n));
+    }
+}
+
+/// PubMed esearch gövdesinden PMID listesini çıkarır — idlist yoksa boş döner.
+fn parse_pubmed_ids(body: &str) -> Vec<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v
+        .get("esearchresult")
+        .and_then(|r| r.get("idlist"))
+        .and_then(|x| x.as_array())
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for x in arr.iter().take(8) {
+        if let Some(s) = x.as_str() {
+            if s.trim().is_empty() {
+                continue;
+            }
+            out.push(s.to_string());
+            if out.len() >= 8 {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// PubMed esummary gövdesinden (başlık, pubmed-url, dergi+tarih) çıkarır.
+fn parse_pubmed_summary(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(obj) = v.get("result").and_then(|x| x.as_object()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (kimlik, it) in obj.iter() {
+        if kimlik == "uids" {
+            continue;
+        }
+        let baslik = it.get("title").and_then(|x| x.as_str()).unwrap_or("");
+        if baslik.trim().is_empty() {
+            continue;
+        }
+        let baglanti = format!("https://pubmed.ncbi.nlm.nih.gov/{}/", kimlik);
+        let dergi = it.get("fulljournalname").and_then(|x| x.as_str()).unwrap_or("");
+        let tarih = it.get("pubdate").and_then(|x| x.as_str()).unwrap_or("");
+        let parca = match (dergi.trim().is_empty(), tarih.trim().is_empty()) {
+            (true, true) => "PubMed kaydı".to_string(),
+            (true, false) => tarih.to_string(),
+            (false, true) => dergi.to_string(),
+            (false, false) => format!("{} · {}", dergi, tarih),
+        };
+        out.push((baslik.to_string(), baglanti, parca));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// 60) PubMed — 2 aşamalı (esearch→esummary), anahtarsız.
+fn src_pubmed(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={}&retmode=json&retmax=8",
+        enc(query)
+    )) else {
+        return;
+    };
+    let ids = parse_pubmed_ids(&body);
+    // idlist boşsa 2. istek atılmaz.
+    if ids.is_empty() {
+        return;
+    }
+    let Some(body2) = get_text(&format!(
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id={}&retmode=json",
+        ids.join(",")
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_pubmed_summary(&body2).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "pubmed".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("PubMed({})", n));
+    }
+}
+
+/// NuGet index gövdesinden sorgu adresini çözer — bulamazsa None döner.
+fn parse_nuget_index(body: &str) -> Option<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return None;
+    };
+    let Some(arr) = v.get("resources").and_then(|x| x.as_array()) else {
+        return None;
+    };
+    for it in arr.iter() {
+        let eslesme = match it.get("@type") {
+            Some(serde_json::Value::String(s)) => s == "SearchQueryService",
+            Some(serde_json::Value::Array(a)) => a.iter().any(|x| x.as_str() == Some("SearchQueryService")),
+            _ => false,
+        };
+        if eslesme {
+            if let Some(adres) = it.get("@id").and_then(|x| x.as_str()) {
+                if !adres.trim().is_empty() {
+                    return Some(adres.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// NuGet sorgu gövdesinden (paket-adı, url, açıklama) çıkarır — data yoksa boş döner.
+fn parse_nuget(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("data").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(8) {
+        let ad = it.get("id").and_then(|x| x.as_str()).unwrap_or("");
+        if ad.trim().is_empty() {
+            continue;
+        }
+        let surum = it.get("version").and_then(|x| x.as_str()).unwrap_or("");
+        let ham = it.get("projectUrl").and_then(|x| x.as_str()).unwrap_or("");
+        let baglanti = if ham.starts_with("http://") || ham.starts_with("https://") {
+            ham.to_string()
+        } else {
+            format!("https://www.nuget.org/packages/{}", ad)
+        };
+        let dusuk = baglanti.to_lowercase();
+        if BAD_EXT.iter().any(|e| dusuk.contains(e)) {
+            continue;
+        }
+        let acik = it.get("description").and_then(|x| x.as_str()).unwrap_or("");
+        let parca = if acik.trim().is_empty() {
+            "NuGet paketi".to_string()
+        } else {
+            acik.chars().take(300).collect()
+        };
+        let baslik = if surum.trim().is_empty() {
+            ad.to_string()
+        } else {
+            format!("{} {}", ad, surum)
+        };
+        out.push((baslik, baglanti, parca));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// 61) NuGet — 2 aşamalı (index→sorgu), anahtarsız.
+fn src_nuget(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    // Önce sorgu adresini çöz, bulunamazsa yedek adrese düş.
+    let adres = get_text("https://api.nuget.org/v3/index.json")
+        .and_then(|b| parse_nuget_index(&b))
+        .unwrap_or_else(|| "https://azuresearch-usnc.nuget.org/query".to_string());
+    let Some(body) = get_text(&format!("{}?q={}&take=8", adres.trim_end_matches('/'), enc(query)))
+    else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_nuget(&body).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "nuget".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("NuGet({})", n));
+    }
+}
+
+/// PubDev arama gövdesinden ilk 5 paket adını çıkarır.
+fn parse_pubdev_search(body: &str) -> Vec<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("packages").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(5) {
+        let ad = it.get("package").and_then(|x| x.as_str()).unwrap_or("");
+        if ad.trim().is_empty() {
+            continue;
+        }
+        out.push(ad.to_string());
+        if out.len() >= 5 {
+            break;
+        }
+    }
+    out
+}
+
+/// PubDev paket detayından (sürüm, açıklama) çıkarır — latest yoksa boş döner.
+fn parse_pubdev_detail(body: &str) -> (String, String) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return (String::new(), String::new());
+    };
+    let Some(son) = v.get("latest") else {
+        return (String::new(), String::new());
+    };
+    let surum = son.get("version").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let acik = son
+        .get("pubspec")
+        .and_then(|p| p.get("description"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    (surum, acik)
+}
+
+/// 62) PubDev — 2 aşamalı (arama→5 detay sıralı), anahtarsız.
+fn src_pubdev(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!("https://pub.dev/api/search?q={}", enc(query))) else {
+        return;
+    };
+    let paketler = parse_pubdev_search(&body);
+    if paketler.is_empty() {
+        return;
+    }
+    let mut n = 0;
+    // 5 detay isteği sıralı atılır (tek thread, yavaş ama kibar).
+    for paket in paketler.into_iter().take(5) {
+        let Some(dbody) = get_text(&format!("https://pub.dev/api/packages/{}", paket)) else {
+            continue;
+        };
+        let (surum, acik) = parse_pubdev_detail(&dbody);
+        out.push(Candidate {
+            title: if surum.trim().is_empty() {
+                paket.clone()
+            } else {
+                format!("{} {}", paket, surum)
+            },
+            url: format!("https://pub.dev/packages/{}", paket),
+            snippet: if acik.trim().is_empty() {
+                "PubDev paketi".to_string()
+            } else {
+                acik.chars().take(300).collect()
+            },
+            source: "pubdev".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("PubDev({})", n));
+    }
+}
+
+/// MusicBrainz gövdesinden (sanatçı-adı, detay-url, not) çıkarır — artists yoksa boş döner.
+fn parse_musicbrainz(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("artists").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(5) {
+        let ad = it.get("name").and_then(|x| x.as_str()).unwrap_or("");
+        let kimlik = it.get("id").and_then(|x| x.as_str()).unwrap_or("");
+        if ad.trim().is_empty() || kimlik.trim().is_empty() {
+            continue;
+        }
+        let ulke = it.get("country").and_then(|x| x.as_str()).unwrap_or("");
+        let baslik = if ulke.trim().is_empty() {
+            ad.to_string()
+        } else {
+            format!("{} ({})", ad, ulke)
+        };
+        let not = it.get("disambiguation").and_then(|x| x.as_str()).unwrap_or("");
+        let parca = if not.trim().is_empty() {
+            "MusicBrainz sanatçısı".to_string()
+        } else {
+            not.chars().take(300).collect()
+        };
+        out.push((baslik, format!("https://musicbrainz.org/artist/{}", kimlik), parca));
+        if out.len() >= 5 {
+            break;
+        }
+    }
+    out
+}
+
+/// 63) MusicBrainz sanatçı araması (kibar UA + tek atış, retry yok).
+fn src_musicbrainz(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let url = format!(
+        "https://musicbrainz.org/ws/2/artist/?query={}&fmt=json&limit=5",
+        enc(query)
+    );
+    // ua_rot kullanılmaz + with_retry yok (1req/sn kuralı, ban yememek için).
+    let Some(body) = agent()
+        .get(&url)
+        .set("User-Agent", "NoralWeb/0.34 (noralweb@example.com)")
+        .set("Accept", "application/json")
+        .call()
+        .ok()
+        .and_then(|r| r.into_string().ok())
+    else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_musicbrainz(&body).into_iter().take(5) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "musicbrainz".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("MusicBrainz({})", n));
+    }
+}
+
+/// TVMaze kişi gövdesinden (ad, url, doğum-tarihi) çıkarır.
+fn parse_tvmaze_people(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(5) {
+        let kisi = it.get("person").unwrap_or(it);
+        let (ad, bag) = (
+            kisi.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+            kisi.get("url").and_then(|x| x.as_str()).unwrap_or(""),
+        );
+        if ad.trim().is_empty() || bag.is_empty() {
+            continue;
+        }
+        if !(bag.starts_with("http://") || bag.starts_with("https://")) {
+            continue;
+        }
+        let dusuk = bag.to_lowercase();
+        if BAD_EXT.iter().any(|e| dusuk.contains(e)) {
+            continue;
+        }
+        let dogum = kisi.get("birthday").and_then(|x| x.as_str()).unwrap_or("");
+        let parca = if dogum.trim().is_empty() {
+            "TVMaze kişisi".to_string()
+        } else {
+            format!("TVMaze kişisi · {}", dogum)
+        };
+        out.push((ad.to_string(), bag.to_string(), parca));
+        if out.len() >= 5 {
+            break;
+        }
+    }
+    out
+}
+
+/// TVMaze dizi gövdesinden (ad, url, özet) çıkarır — summary HTML'i temizlenir.
+fn parse_tvmaze_shows(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(5) {
+        let dizi = it.get("show").unwrap_or(it);
+        let (ad, bag, ozet) = (
+            dizi.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+            dizi.get("url").and_then(|x| x.as_str()).unwrap_or(""),
+            dizi.get("summary").and_then(|x| x.as_str()).unwrap_or(""),
+        );
+        if ad.trim().is_empty() || bag.is_empty() {
+            continue;
+        }
+        if !(bag.starts_with("http://") || bag.starts_with("https://")) {
+            continue;
+        }
+        let dusuk = bag.to_lowercase();
+        if BAD_EXT.iter().any(|e| dusuk.contains(e)) {
+            continue;
+        }
+        let parca = strip_tags(ozet).chars().take(300).collect::<String>();
+        out.push((
+            ad.to_string(),
+            bag.to_string(),
+            if parca.trim().is_empty() {
+                "TVMaze dizisi".to_string()
+            } else {
+                parca
+            },
+        ));
+        if out.len() >= 5 {
+            break;
+        }
+    }
+    out
+}
+
+/// 64) TVMaze kişi+dizi (çift istek), anahtarsız.
+fn src_tvmaze(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let mut n = 0;
+    if let Some(body) = get_text(&format!("https://api.tvmaze.com/search/people?q={}", enc(query))) {
+        for (ti, ur, sn) in parse_tvmaze_people(&body).into_iter().take(5) {
+            out.push(Candidate {
+                title: ti,
+                url: ur,
+                snippet: sn,
+                source: "tvmaze".into(),
+                depth: 0,
+                page: String::new(),
+            });
+            n += 1;
+        }
+    }
+    if let Some(body) = get_text(&format!("https://api.tvmaze.com/search/shows?q={}", enc(query))) {
+        for (ti, ur, sn) in parse_tvmaze_shows(&body).into_iter().take(5) {
+            out.push(Candidate {
+                title: ti,
+                url: ur,
+                snippet: sn,
+                source: "tvmaze".into(),
+                depth: 0,
+                page: String::new(),
+            });
+            n += 1;
+        }
+    }
+    if n > 0 {
+        sources.push(format!("TVMaze({})", n));
+    }
+}
+
+/// Dailymotion gövdesinden (başlık, url, açıklama) çıkarır — list yoksa boş döner.
+fn parse_dailymotion(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("list").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(5) {
+        let (baslik, bag, acik) = (
+            it.get("title").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("url").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("description").and_then(|x| x.as_str()).unwrap_or(""),
+        );
+        if baslik.trim().is_empty() || bag.is_empty() {
+            continue;
+        }
+        if !(bag.starts_with("http://") || bag.starts_with("https://")) {
+            continue;
+        }
+        let dusuk = bag.to_lowercase();
+        if BAD_EXT.iter().any(|e| dusuk.contains(e)) {
+            continue;
+        }
+        out.push((
+            baslik.to_string(),
+            bag.to_string(),
+            if acik.trim().is_empty() {
+                "Dailymotion videosu".to_string()
+            } else {
+                acik.chars().take(300).collect()
+            },
+        ));
+        if out.len() >= 5 {
+            break;
+        }
+    }
+    out
+}
+
+/// 65) Dailymotion video araması (anahtarsız).
+fn src_dailymotion(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://api.dailymotion.com/videos?search={}&limit=5&fields=id,title,url,description",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_dailymotion(&body).into_iter().take(5) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "dailymotion".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("Dailymotion({})", n));
+    }
+}
+
+/// PeerTube (SepiaSearch) gövdesinden (ad, url, açıklama) çıkarır.
+fn parse_peertube(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("data").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(8) {
+        let (ad, bag, acik) = (
+            it.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("url").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("description").and_then(|x| x.as_str()).unwrap_or(""),
+        );
+        if ad.trim().is_empty() || bag.is_empty() {
+            continue;
+        }
+        if !(bag.starts_with("http://") || bag.starts_with("https://")) {
+            continue;
+        }
+        let dusuk = bag.to_lowercase();
+        if BAD_EXT.iter().any(|e| dusuk.contains(e)) {
+            continue;
+        }
+        out.push((
+            ad.to_string(),
+            bag.to_string(),
+            if acik.trim().is_empty() {
+                "PeerTube videosu".to_string()
+            } else {
+                acik.chars().take(300).collect()
+            },
+        ));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// 66) PeerTube video araması (SepiaSearch, anahtarsız).
+fn src_peertube(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://sepiasearch.org/api/v1/search/videos?search={}&page=1",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_peertube(&body).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "peertube".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("PeerTube({})", n));
+    }
+}
+
+/// Sözlük gövdesinden (kelime, tanım-url, ilk-2-tanım) çıkarır — dizi yoksa boş döner.
+fn parse_dictionary(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(3) {
+        let kelime = it.get("word").and_then(|x| x.as_str()).unwrap_or("");
+        if kelime.trim().is_empty() {
+            continue;
+        }
+        let mut tanimlar: Vec<String> = Vec::new();
+        if let Some(anlamlar) = it.get("meanings").and_then(|x| x.as_array()) {
+            for anlam in anlamlar.iter() {
+                if let Some(tanim_dizisi) = anlam.get("definitions").and_then(|x| x.as_array()) {
+                    for t in tanim_dizisi.iter() {
+                        if let Some(cumle) = t.get("definition").and_then(|x| x.as_str()) {
+                            if cumle.trim().is_empty() {
+                                continue;
+                            }
+                            tanimlar.push(cumle.trim().to_string());
+                            if tanimlar.len() >= 2 {
+                                break;
+                            }
+                        }
+                    }
+                }
+                if tanimlar.len() >= 2 {
+                    break;
+                }
+            }
+        }
+        if tanimlar.is_empty() {
+            continue;
+        }
+        out.push((
+            kelime.to_string(),
+            format!("https://en.wiktionary.org/wiki/{}", enc(kelime)),
+            tanimlar.join(" · ").chars().take(300).collect(),
+        ));
+        if out.len() >= 3 {
+            break;
+        }
+    }
+    out
+}
+
+/// 67) Sözlük tanım araması (anahtarsız, 404'te sessiz).
+fn src_dictionary(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    // Çok kelimelide 404 döner — özel durum yazılmaz, sessiz boş dönülür.
+    let Some(body) = get_text(&format!(
+        "https://api.dictionaryapi.dev/api/v2/entries/en/{}",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_dictionary(&body).into_iter().take(3) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "dictionary".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("Dictionary({})", n));
+    }
+}
+
+/// Commons gövdesinden (başlık, curid-url, açıklama) çıkarır — WikiAra ile aynı şema.
+fn parse_commons(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v
+        .get("query")
+        .and_then(|q| q.get("search"))
+        .and_then(|x| x.as_array())
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(8) {
+        let baslik = it.get("title").and_then(|x| x.as_str()).unwrap_or("");
+        if baslik.trim().is_empty() {
+            continue;
+        }
+        let kimlik = it.get("pageid").and_then(|x| x.as_u64()).unwrap_or(0);
+        if kimlik == 0 {
+            continue;
+        }
+        let ham = it.get("snippet").and_then(|x| x.as_str()).unwrap_or("");
+        let ozet: String = strip_tags(ham).chars().take(400).collect();
+        out.push((baslik.to_string(), format!("https://commons.wikimedia.org/?curid={}", kimlik), ozet));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// 68) Commons dosya araması (anahtarsız).
+fn src_commons(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch={}&srlimit=8&format=json&utf8=",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_commons(&body).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "commons".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("Commons({})", n));
+    }
+}
+
+/// Fandom gövdesinden (etiketli-başlık, curid-url, açıklama) çıkarır.
+fn parse_fandom(body: &str, wiki: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v
+        .get("query")
+        .and_then(|q| q.get("search"))
+        .and_then(|x| x.as_array())
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(3) {
+        let baslik = it.get("title").and_then(|x| x.as_str()).unwrap_or("");
+        if baslik.trim().is_empty() {
+            continue;
+        }
+        let kimlik = it.get("pageid").and_then(|x| x.as_u64()).unwrap_or(0);
+        if kimlik == 0 {
+            continue;
+        }
+        let ham = it.get("snippet").and_then(|x| x.as_str()).unwrap_or("");
+        let ozet: String = strip_tags(ham).chars().take(400).collect();
+        out.push((
+            format!("[{}] {}", wiki, baslik),
+            format!("https://{}.fandom.com/?curid={}", wiki, kimlik),
+            ozet,
+        ));
+        if out.len() >= 3 {
+            break;
+        }
+    }
+    out
+}
+
+/// 69) Fandom 3 wiki araması (starwars+minecraft+marvel, anahtarsız).
+fn src_fandom(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let mut n = 0;
+    for wiki in ["starwars", "minecraft", "marvel"] {
+        let Some(body) = get_text(&format!(
+            "https://{}.fandom.com/api.php?action=query&list=search&srsearch={}&srlimit=3&format=json&utf8=",
+            wiki,
+            enc(query)
+        )) else {
+            continue;
+        };
+        for (ti, ur, sn) in parse_fandom(&body, wiki).into_iter().take(3) {
+            out.push(Candidate {
+                title: ti,
+                url: ur,
+                snippet: sn,
+                source: "fandom".into(),
+                depth: 0,
+                page: String::new(),
+            });
+            n += 1;
+        }
+    }
+    if n > 0 {
+        sources.push(format!("Fandom({})", n));
+    }
+}
+
+/// Arşiv gövdesinden (başlık, detay-url, tür+a açıklama) çıkarır.
+fn parse_intarchive(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v
+        .get("response")
+        .and_then(|r| r.get("docs"))
+        .and_then(|x| x.as_array())
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(10) {
+        let (kimlik, baslik) = (
+            it.get("identifier").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("title").and_then(|x| x.as_str()).unwrap_or(""),
+        );
+        if kimlik.trim().is_empty() || baslik.trim().is_empty() {
+            continue;
+        }
+        let (tur, acik) = (
+            it.get("mediatype").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("description").and_then(|x| x.as_str()).unwrap_or(""),
+        );
+        let parca = match (tur.trim().is_empty(), acik.trim().is_empty()) {
+            (true, true) => "Internet Archive kaydı".to_string(),
+            (true, false) => acik.chars().take(300).collect(),
+            (false, true) => tur.to_string(),
+            (false, false) => format!("{} · {}", tur, acik.chars().take(280).collect::<String>()),
+        };
+        out.push((baslik.to_string(), format!("https://archive.org/details/{}", kimlik), parca));
+        if out.len() >= 10 {
+            break;
+        }
+    }
+    out
+}
+
+/// 70) Internet Archive araması (output=json şart, anahtarsız).
+fn src_intarchive(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://archive.org/advancedsearch.php?q={}&fl[]=identifier&fl[]=title&fl[]=description&fl[]=mediatype&rows=10&page=1&output=json",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_intarchive(&body).into_iter().take(10) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "intarchive".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("IntArchive({})", n));
+    }
+}
+
+/// Medium etiket RSS gövdesinden (başlık, url, açıklama) çıkarır — <item> yoksa boş döner.
+fn parse_medium(body: &str) -> Vec<(String, String, String)> {
+    if !body.contains("<item") {
+        return Vec::new();
+    }
+    // CDATA sarmalını çöz (strip_tags öncesi, yoksa başlık yutulur).
+    let coz = |ham: &str| ham.replace("<![CDATA[", "").replace("]]>", "");
+    // Blok içi `<etiket ...>...</etiket>` metni (nitelikli açılışa dayanıklı).
+    let alan = |blok: &str, etiket: &str| -> String {
+        let acilis = format!("<{}", etiket);
+        let kapanis = format!("</{}>", etiket);
+        let a = match blok.find(&acilis) {
+            Some(i) => i,
+            None => return String::new(),
+        };
+        let gt = match blok[a..].find('>') {
+            Some(i) => a + i + 1,
+            None => return String::new(),
+        };
+        let son = match blok[gt..].find(&kapanis) {
+            Some(i) => gt + i,
+            None => return String::new(),
+        };
+        strip_tags(&coz(&blok[gt..son])).trim().to_string()
+    };
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while out.len() < 8 {
+        let a = match body[pos..].find("<item") {
+            Some(i) => pos + i,
+            None => break,
+        };
+        let gt = match body[a..].find('>') {
+            Some(i) => a + i + 1,
+            None => break,
+        };
+        let son = match body[gt..].find("</item>") {
+            Some(i) => gt + i,
+            None => break,
+        };
+        let blok = &body[gt..son];
+        pos = son + 7;
+        let baslik = alan(blok, "title");
+        let baglanti = alan(blok, "link");
+        if baslik.is_empty() || baglanti.is_empty() {
+            continue;
+        }
+        if !(baglanti.starts_with("http://") || baglanti.starts_with("https://")) {
+            continue;
+        }
+        let dusuk = baglanti.to_lowercase();
+        if BAD_EXT.iter().any(|e| dusuk.contains(e)) {
+            continue;
+        }
+        let acik = alan(blok, "description");
+        out.push((
+            baslik,
+            baglanti,
+            if acik.trim().is_empty() {
+                "Medium yazısı".to_string()
+            } else {
+                acik.chars().take(300).collect()
+            },
+        ));
+    }
+    out
+}
+
+/// 71) Medium etiket akışı (anahtarsız RSS).
+fn src_medium(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    // Etiket: küçükharf + boşluklar tireye çevrilir.
+    let etiket = query.to_lowercase().split_whitespace().collect::<Vec<_>>().join("-");
+    if etiket.trim().is_empty() {
+        return;
+    }
+    let Some(body) = get_text(&format!("https://medium.com/feed/tag/{}", enc(&etiket))) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_medium(&body).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "medium".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("Medium({})", n));
+    }
+}
+
+/// Substack gövdesinden (yayın-adı, alt-url, açıklama) çıkarır — iki şemayı da dener.
+fn parse_substack(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v
+        .get("publications")
+        .and_then(|x| x.as_array())
+        .or_else(|| v.get("results").and_then(|x| x.as_array()))
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(5) {
+        let (ad, alt) = (
+            it.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("subdomain").and_then(|x| x.as_str()).unwrap_or(""),
+        );
+        if ad.trim().is_empty() || alt.trim().is_empty() {
+            continue;
+        }
+        let acik = it.get("description").and_then(|x| x.as_str()).unwrap_or("");
+        out.push((
+            ad.to_string(),
+            format!("https://{}.substack.com", alt),
+            if acik.trim().is_empty() {
+                "Substack yayını".to_string()
+            } else {
+                acik.chars().take(300).collect()
+            },
+        ));
+        if out.len() >= 5 {
+            break;
+        }
+    }
+    out
+}
+
+/// 72) Substack yayın araması (kırılgan, best-effort).
+fn src_substack(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let url = format!("https://substack.com/api/v1/publication/search?query={}", enc(query));
+    let Some(body) = with_retry(|| {
+        agent()
+            .get(&url)
+            .set("User-Agent", ua_rot())
+            .set("Accept", "application/json")
+            .set("Referer", "https://substack.com/")
+            .set("Origin", "https://substack.com/")
+            .call()
+    })
+    .ok()
+    .and_then(|r| r.into_string().ok())
+    else {
+        return;
+    };
+    // Boşsa sessiz dönülür.
+    if body.trim().is_empty() {
+        return;
+    }
+    let mut n = 0;
+    for (ti, ur, sn) in parse_substack(&body).into_iter().take(5) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "substack".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("Substack({})", n));
+    }
+}
+
+/// CoinGecko gövdesinden (para-adı, coin-url, sembol) çıkarır — coins yoksa boş döner.
+fn parse_coingecko(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("coins").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(8) {
+        let (ad, simge, kimlik) = (
+            it.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("symbol").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("id").and_then(|x| x.as_str()).unwrap_or(""),
+        );
+        if ad.trim().is_empty() || kimlik.trim().is_empty() {
+            continue;
+        }
+        let baslik = if simge.trim().is_empty() {
+            ad.to_string()
+        } else {
+            format!("{} ({})", ad, simge.to_uppercase())
+        };
+        out.push((
+            baslik,
+            format!("https://www.coingecko.com/en/coins/{}", kimlik),
+            if simge.trim().is_empty() {
+                "CoinGecko kripto kaydı".to_string()
+            } else {
+                format!("CoinGecko · {}", simge.to_uppercase())
+            },
+        ));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// 73) CoinGecko para araması (tek atış, kota dostu — retry yok).
+fn src_coingecko(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let url = format!("https://api.coingecko.com/api/v3/search?query={}", enc(query));
+    // Tek deneme — kota çabuk tükenir, tekrar denenmez.
+    let Some(body) = agent()
+        .get(&url)
+        .set("User-Agent", ua_rot())
+        .set("Accept", "application/json")
+        .call()
+        .ok()
+        .and_then(|r| r.into_string().ok())
+    else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_coingecko(&body).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "coingecko".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("CoinGecko({})", n));
+    }
+}
+
 /// Sayfa çek: başlık + metin + dış linkler + meta. Yoksa None.
 pub struct PageData {
     pub title: String,
@@ -4608,6 +6478,31 @@ pub fn live_search(query: &str, deep: bool, apx: u8) -> (Vec<Candidate>, Vec<Str
         mk(src_wikiara),
         mk(src_deezer),
         mk(src_nominatim),
+        mk(src_gbooks),
+        mk(src_europepmc),
+        mk(src_gitlab),
+        mk(src_dockerhub),
+        mk(src_huggingface),
+        mk(src_codeberg),
+        mk(src_maven),
+        mk(src_rubygems),
+        mk(src_packagist),
+        mk(src_hex),
+        mk(src_itunes),
+        mk(src_pubmed),
+        mk(src_nuget),
+        mk(src_pubdev),
+        mk(src_musicbrainz),
+        mk(src_tvmaze),
+        mk(src_dailymotion),
+        mk(src_peertube),
+        mk(src_dictionary),
+        mk(src_commons),
+        mk(src_fandom),
+        mk(src_intarchive),
+        mk(src_medium),
+        mk(src_substack),
+        mk(src_coingecko),
     ];
     // Derin modda SearXNG 2. sayfa da paralel koşar.
     if deep {
@@ -4640,7 +6535,7 @@ pub fn live_search(query: &str, deep: bool, apx: u8) -> (Vec<Candidate>, Vec<Str
 
     // Suskun kaynaklar (UI'da gri görünür).
     // Google-H: gizli hasat yedeği (main.rs rank öncesi ekler).
-    const BEKLENEN: [&str; 45] = [
+    const BEKLENEN: [&str; 70] = [
         "DuckDuckGo", "Wikipedia-tr", "Wikipedia-en", "WikiTam-tr", "WikiTam-en",
         "Wikidata", "DBpedia", "GitHub", "Stack", "SO-kullanıcı", "HN", "Akademik", "npm",
         "crates", "arXiv", "DDG-Web", "Wiby", "SearXNG", "CC", "Exa", "Tavily", "LangSearch",
@@ -4648,6 +6543,10 @@ pub fn live_search(query: &str, deep: bool, apx: u8) -> (Vec<Candidate>, Vec<Str
         "ORCID", "GDELT", "OpenLib", "Bing-Sosyal",
         "Yahoo", "Ecosia", "BraveWeb", "Yandex", "Qwant", "Reddit",
         "WikiAra-tr", "WikiAra-en", "Deezer", "Nominatim", "Yandex-H",
+        "GBooks", "EuroPMC", "GitLab", "DockerHub", "HuggingFace",
+        "Codeberg", "Maven", "RubyGems", "Packagist", "Hex", "iTunes",
+        "PubMed", "NuGet", "PubDev", "MusicBrainz", "TVMaze", "Dailymotion", "PeerTube",
+        "Dictionary", "Commons", "Fandom", "IntArchive", "Medium", "Substack", "CoinGecko",
     ];
     let mut silent: Vec<String> = Vec::new();
     for b in BEKLENEN {
@@ -5303,6 +7202,208 @@ mod tests {
     }
 
     #[test]
+    fn gbooks_parse() {
+        // Gerçek şema: yazarlı + yazarsız kayıt.
+        let body = r#"{"kind":"books#volumes","totalItems":2,"items":[
+            {"volumeInfo":{"title":"Rust Programlama","authors":["Ali Veli","Ayşe Yılmaz"],"description":"Rust dili üzerine kapsamlı bir kaynak.","infoLink":"https://books.google.com/books?id=abc123"}},
+            {"volumeInfo":{"title":"Yalnız Kitap","description":"","infoLink":"https://books.google.com/books?id=def456"}}
+        ]}"#;
+        let r = parse_gbooks(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "Rust Programlama");
+        assert_eq!(r[0].1, "https://books.google.com/books?id=abc123");
+        assert!(r[0].2.contains("Ali Veli"));
+        assert!(r[0].2.contains("kapsamlı"));
+        assert_eq!(r[1].0, "Yalnız Kitap");
+        // Boş / bozuk haller sessiz döner.
+        assert!(parse_gbooks(r#"{"totalItems":0}"#).is_empty());
+        assert!(parse_gbooks("bu json değil").is_empty());
+        assert!(parse_gbooks(r#"{"items":[]}"#).is_empty());
+    }
+
+    #[test]
+    fn europepmc_parse() {
+        // Biri DOI'li, biri DOI'süz (yedek europepmc araması).
+        let body = r#"{"hitCount":2,"resultList":{"result":[
+            {"title":"Rust memory safety study","authorString":"Veli A, Demir M","doi":"10.1000/test1"},
+            {"title":"Systems programming survey","authorString":"Yılmaz A","doi":""}
+        ]}}"#;
+        let r = parse_europepmc(body, "rust");
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "Rust memory safety study");
+        assert_eq!(r[0].1, "https://doi.org/10.1000/test1");
+        assert!(r[0].2.contains("Veli"));
+        assert!(r[1].1.contains("europepmc.org/search?query="));
+        assert!(parse_europepmc(r#"{"hitCount":0}"#, "rust").is_empty());
+        assert!(parse_europepmc("bu json değil", "rust").is_empty());
+    }
+
+    #[test]
+    fn gitlab_parse() {
+        // Çıplak dizi şeması.
+        let body = r#"[
+            {"name":"rust-analyzer","description":"Rust dil sunucusu","web_url":"https://gitlab.com/rust/rust-analyzer"},
+            {"name":"bos-proje","description":"","web_url":"https://gitlab.com/ornek/bos"}
+        ]"#;
+        let r = parse_gitlab(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "rust-analyzer");
+        assert_eq!(r[0].1, "https://gitlab.com/rust/rust-analyzer");
+        assert!(r[0].2.contains("dil sunucusu"));
+        assert_eq!(r[1].2, "GitLab projesi");
+        assert!(parse_gitlab("[]").is_empty());
+        assert!(parse_gitlab("bu json değil").is_empty());
+        assert!(parse_gitlab(r#"{}"#).is_empty());
+    }
+
+    #[test]
+    fn dockerhub_parse() {
+        let body = r#"{"count":2,"results":[
+            {"repo_name":"library/rust","short_description":"Resmi Rust imajı"},
+            {"repo_name":"ornek/bos","short_description":""}
+        ]}"#;
+        let r = parse_dockerhub(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "library/rust");
+        assert_eq!(r[0].1, "https://hub.docker.com/r/library/rust");
+        assert!(r[0].2.contains("Resmi Rust"));
+        assert_eq!(r[1].2, "Docker Hub imajı");
+        assert!(parse_dockerhub(r#"{}"#).is_empty());
+        assert!(parse_dockerhub("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn hf_parse() {
+        // Dolu likes + boş likes hali.
+        let body = r#"[
+            {"id":"bert-base-uncased","likes":120,"tags":["pytorch","bert"]},
+            {"id":"ornek/bos-model"}
+        ]"#;
+        let r = parse_hf(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "bert-base-uncased");
+        assert_eq!(r[0].1, "https://huggingface.co/bert-base-uncased");
+        assert!(r[0].2.contains("120"));
+        assert_eq!(r[1].2, "Hugging Face kaydı");
+        assert!(parse_hf("[]").is_empty());
+        assert!(parse_hf("bu json değil").is_empty());
+        assert!(parse_hf(r#"{}"#).is_empty());
+    }
+
+    #[test]
+    fn codeberg_parse() {
+        // Sarmalayıcı data şeması (çıplak dizi değil!).
+        let body = r#"{"data":[
+            {"full_name":"ornek/rust-proje","description":"Örnek Rust projesi","html_url":"https://codeberg.org/ornek/rust-proje"},
+            {"full_name":"ornek/bos","description":"","html_url":"https://codeberg.org/ornek/bos"}
+        ]}"#;
+        let r = parse_codeberg(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "ornek/rust-proje");
+        assert_eq!(r[0].1, "https://codeberg.org/ornek/rust-proje");
+        assert_eq!(r[1].2, "Codeberg reposu");
+        // Çıplak dizi gelse boş dönmeli (şema katı).
+        assert!(parse_codeberg("[]").is_empty());
+        assert!(parse_codeberg("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn maven_parse() {
+        let body = r#"{"response":{"docs":[
+            {"g":"org.junit","a":"junit","latestVersion":"5.10.0"},
+            {"g":"ornek","a":"bos","latestVersion":""}
+        ]}}"#;
+        let r = parse_maven(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "org.junit:junit");
+        assert_eq!(r[0].1, "https://central.sonatype.com/artifact/org.junit/junit/5.10.0");
+        assert!(r[0].2.contains("5.10.0"));
+        assert_eq!(r[1].2, "Maven paketi");
+        assert!(parse_maven(r#"{"response":{"docs":[]}}"#).is_empty());
+        assert!(parse_maven("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn rubygems_parse() {
+        let body = r#"[
+            {"name":"rails","info":"Web çatısı","project_uri":"https://rubygems.org/gems/rails","version":"7.1.0"},
+            {"name":"bos-gem","info":"","project_uri":"","version":""}
+        ]"#;
+        let r = parse_rubygems(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "rails 7.1.0");
+        assert_eq!(r[0].1, "https://rubygems.org/gems/rails");
+        assert_eq!(r[1].1, "https://rubygems.org/gems/bos-gem");
+        assert!(parse_rubygems("[]").is_empty());
+        assert!(parse_rubygems("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn packagist_parse() {
+        let body = r#"{"results":[
+            {"name":"laravel/framework","description":"PHP çatısı","url":"https://packagist.org/packages/laravel/framework"},
+            {"name":"ornek/bos","description":"","url":"https://packagist.org/packages/ornek/bos"}
+        ]}"#;
+        let r = parse_packagist(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "laravel/framework");
+        assert_eq!(r[0].2, "PHP çatısı");
+        assert_eq!(r[1].2, "Packagist paketi");
+        assert!(parse_packagist(r#"{"results":[]}"#).is_empty());
+        assert!(parse_packagist("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn hex_parse() {
+        let body = r#"[
+            {"name":"phoenix","meta":{"description":"Elixir web çatısı"}},
+            {"name":"bos-paket","meta":{}}
+        ]"#;
+        let r = parse_hex(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "phoenix");
+        assert_eq!(r[0].1, "https://hex.pm/packages/phoenix");
+        assert!(r[0].2.contains("Elixir"));
+        assert_eq!(r[1].2, "Hex paketi");
+        assert!(parse_hex("[]").is_empty());
+        assert!(parse_hex("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn itunes_parse() {
+        // Normal + eksik trackName (derlemeye düşer) hali.
+        let body = r#"{"resultCount":2,"results":[
+            {"trackName":"Bölüm 1","artistName":"Podcast A","trackViewUrl":"https://podcasts.apple.com/us/podcast/id123","collectionName":"Harika Podcast"},
+            {"artistName":"Sanatçı B","trackViewUrl":"https://music.apple.com/us/song/456","collectionName":"Güzel Albüm"}
+        ]}"#;
+        let r = parse_itunes(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "Bölüm 1 – Podcast A");
+        assert!(r[0].2.contains("Harika Podcast"));
+        assert_eq!(r[1].0, "Güzel Albüm – Sanatçı B");
+        assert!(parse_itunes(r#"{"results":[]}"#).is_empty());
+        assert!(parse_itunes("bu json değil").is_empty());
+    }
+
+    #[test]
+    #[ignore]
+    fn books_canli() {
+        let mut o = Vec::new();
+        let mut s = Vec::new();
+        src_gbooks("rust", &mut o, &mut s);
+        assert!(!o.is_empty(), "GBooks sonuç dönmedi");
+    }
+
+    #[test]
+    #[ignore]
+    fn itunes_canli() {
+        let mut o = Vec::new();
+        let mut s = Vec::new();
+        src_itunes("rust", &mut o, &mut s);
+        assert!(!o.is_empty(), "iTunes sonuç dönmedi");
+    }
+
+    #[test]
     #[ignore]
     fn deezer_canli() {
         let mut o = Vec::new();
@@ -5319,12 +7420,269 @@ mod tests {
         src_wikiara("Ankara", &mut o, &mut s);
         assert!(!o.is_empty(), "WikiAra sonuç dönmedi");
     }
+
+    #[test]
+    fn pubmed_parse() {
+        // esearch: 2 PMID döner.
+        let arama = r#"{"esearchresult":{"idlist":["12345","67890"],"count":"2"}}"#;
+        let ids = parse_pubmed_ids(arama);
+        assert_eq!(ids, vec!["12345".to_string(), "67890".to_string()]);
+        // Boş idlist + bozuk gövde.
+        assert!(parse_pubmed_ids(r#"{"esearchresult":{"idlist":[]}}"#).is_empty());
+        assert!(parse_pubmed_ids("bu json değil").is_empty());
+        // esummary: dergi+tarihli + dergisisiz kayıt.
+        let ozet = r#"{"result":{"uids":["12345","67890"],"12345":{"uid":"12345","title":"Test Makalesi Başlığı","fulljournalname":"Test Dergisi","pubdate":"2023 Jan"},"67890":{"uid":"67890","title":"İkinci Makale","fulljournalname":"","pubdate":""}}}"#;
+        let r = parse_pubmed_summary(ozet);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "Test Makalesi Başlığı");
+        assert_eq!(r[0].1, "https://pubmed.ncbi.nlm.nih.gov/12345/");
+        assert!(r[0].2.contains("Test Dergisi"));
+        assert!(r[0].2.contains("2023"));
+        assert_eq!(r[1].2, "PubMed kaydı");
+        assert!(parse_pubmed_summary(r#"{"result":{"uids":[]}}"#).is_empty());
+        assert!(parse_pubmed_summary("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn nuget_parse() {
+        // Index: sorgu adresi çözülür.
+        let idx = r#"{"resources":[{"@id":"https://example.com/query","@type":"SearchQueryService"},{"@id":"https://ornek.com/diger","@type":"PackageBaseAddress"}]}"#;
+        assert_eq!(parse_nuget_index(idx).as_deref(), Some("https://example.com/query"));
+        // Dizi @type hali de çözülür.
+        let idx2 = r#"{"resources":[{"@id":"https://dizi.com/q","@type":["SearchQueryService","X"]}]}"#;
+        assert_eq!(parse_nuget_index(idx2).as_deref(), Some("https://dizi.com/q"));
+        assert!(parse_nuget_index(r#"{"resources":[]}"#).is_none());
+        assert!(parse_nuget_index("bu json değil").is_none());
+        // Data: sürümlü + açıklamalı.
+        let body = r#"{"totalHits":2,"data":[{"id":"Newtonsoft.Json","version":"13.0.3","description":"JSON çatısı","projectUrl":"https://github.com/ornek/json"},{"id":"bos-paket","version":"","description":"","projectUrl":""}]}"#;
+        let r = parse_nuget(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "Newtonsoft.Json 13.0.3");
+        assert_eq!(r[0].1, "https://github.com/ornek/json");
+        assert!(r[0].2.contains("JSON"));
+        assert_eq!(r[1].1, "https://www.nuget.org/packages/bos-paket");
+        assert_eq!(r[1].2, "NuGet paketi");
+        assert!(parse_nuget(r#"{"data":[]}"#).is_empty());
+        assert!(parse_nuget("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn pubdev_parse() {
+        // Arama: ilk 5 paket adı.
+        let arama = r#"{"packages":[{"package":"http"},{"package":"provider"},{"package":""},{"package":"riverpod"}]}"#;
+        let p = parse_pubdev_search(arama);
+        assert_eq!(p, vec!["http".to_string(), "provider".to_string(), "riverpod".to_string()]);
+        assert!(parse_pubdev_search(r#"{"packages":[]}"#).is_empty());
+        assert!(parse_pubdev_search("bu json değil").is_empty());
+        // Detay: sürüm + açıklama.
+        let detay = r#"{"name":"http","latest":{"version":"1.2.0","pubspec":{"description":"HTTP istemcisi"}}}"#;
+        let (surum, acik) = parse_pubdev_detail(detay);
+        assert_eq!(surum, "1.2.0");
+        assert!(acik.contains("HTTP"));
+        let (b1, b2) = parse_pubdev_detail(r#"{"name":"bos"}"#);
+        assert!(b1.is_empty() && b2.is_empty());
+        assert!(parse_pubdev_detail("bu json değil") == (String::new(), String::new()));
+    }
+
+    #[test]
+    fn musicbrainz_parse() {
+        // Biri açıklamalı, biri boş disambiguation (varsayılan snippet).
+        let body = r#"{"artists":[{"id":"abc-123","name":"Madonna","disambiguation":"Pop şarkıcısı","country":"US"},{"id":"def-456","name":"Madonna Tribute","disambiguation":"","country":""}]}"#;
+        let r = parse_musicbrainz(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "Madonna (US)");
+        assert_eq!(r[0].1, "https://musicbrainz.org/artist/abc-123");
+        assert!(r[0].2.contains("Pop"));
+        assert_eq!(r[1].0, "Madonna Tribute");
+        assert_eq!(r[1].2, "MusicBrainz sanatçısı");
+        assert!(parse_musicbrainz(r#"{"artists":[]}"#).is_empty());
+        assert!(parse_musicbrainz("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn tvmaze_parse() {
+        // Kişiler: doğumlu + doğumsuz.
+        let kisi = r#"[{"person":{"name":"Bryan Cranston","url":"https://www.tvmaze.com/people/1/x","birthday":"1956-03-07"}},{"person":{"name":"Gizli Oyuncu","url":"https://www.tvmaze.com/people/2/y","birthday":null}}]"#;
+        let r = parse_tvmaze_people(kisi);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "Bryan Cranston");
+        assert!(r[0].2.contains("1956"));
+        assert_eq!(r[1].2, "TVMaze kişisi");
+        assert!(parse_tvmaze_people("[]").is_empty());
+        assert!(parse_tvmaze_people("bu json değil").is_empty());
+        // Diziler: HTML özet temizlenir.
+        let dizi = r#"[{"show":{"name":"Breaking Bad","url":"https://www.tvmaze.com/shows/1/bb","summary":"<p>Harika <b>dizi</b> özeti.</p>"}}]"#;
+        let r2 = parse_tvmaze_shows(dizi);
+        assert_eq!(r2.len(), 1);
+        assert_eq!(r2[0].0, "Breaking Bad");
+        assert!(!r2[0].2.contains("<p>"));
+        assert!(r2[0].2.contains("Harika"));
+        assert!(parse_tvmaze_shows("[]").is_empty());
+    }
+
+    #[test]
+    fn dailymotion_parse() {
+        let body = r#"{"list":[{"title":"Test Videosu","url":"https://www.dailymotion.com/video/x123","description":"Açıklama metni"},{"title":"Sessiz Video","url":"https://www.dailymotion.com/video/x456","description":""}]}"#;
+        let r = parse_dailymotion(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "Test Videosu");
+        assert!(r[0].2.contains("Açıklama"));
+        assert_eq!(r[1].2, "Dailymotion videosu");
+        assert!(parse_dailymotion(r#"{"list":[]}"#).is_empty());
+        assert!(parse_dailymotion("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn peertube_parse() {
+        let body = r#"{"data":[{"name":"Örnek Video","url":"https://ornek.com/v/1","description":"Video açıklaması"},{"name":"Sessiz","url":"https://ornek.com/v/2","description":""}]}"#;
+        let r = parse_peertube(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "Örnek Video");
+        assert!(r[0].2.contains("açıklaması"));
+        assert_eq!(r[1].2, "PeerTube videosu");
+        assert!(parse_peertube(r#"{"data":[]}"#).is_empty());
+        assert!(parse_peertube("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn dictionary_parse() {
+        // 2 tanım birleşir, wiktionary bağlantısı kurulur.
+        let body = r#"[{"word":"test","meanings":[{"definitions":[{"definition":"Bir deneme tanımı."},{"definition":"İkinci tanım cümlesi."},{"definition":"Üçüncü yutulur."}]}]}]"#;
+        let r = parse_dictionary(body);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "test");
+        assert!(r[0].1.contains("wiktionary.org/wiki/test"));
+        assert!(r[0].2.contains("Bir deneme"));
+        assert!(r[0].2.contains("İkinci tanım"));
+        assert!(!r[0].2.contains("Üçüncü"));
+        assert!(parse_dictionary("[]").is_empty());
+        assert!(parse_dictionary("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn commons_parse() {
+        // WikiAra ile aynı şema: pageid → curid bağlantısı.
+        let body = r#"{"query":{"search":[{"title":"Kedi","pageid":111,"snippet":"Evcil <span class=\"searchmatch\">kedi</span> fotoğrafı."},{"title":"Boş","pageid":0,"snippet":"yutulur"}]}}"#;
+        let r = parse_commons(body);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "Kedi");
+        assert_eq!(r[0].1, "https://commons.wikimedia.org/?curid=111");
+        assert!(r[0].2.contains("kedi"));
+        assert!(!r[0].2.contains("<span"));
+        assert!(parse_commons(r#"{"query":{"search":[]}}"#).is_empty());
+        assert!(parse_commons("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn fandom_parse() {
+        // pageid'li kayıt alınır, başlığa wiki etiketi konur.
+        let body = r#"{"query":{"search":[{"title":"Luke Skywalker","pageid":777,"snippet":"Jedi <span>şövalyesi</span>."},{"title":"Boş","pageid":0,"snippet":"yutulur"}]}}"#;
+        let r = parse_fandom(body, "starwars");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "[starwars] Luke Skywalker");
+        assert_eq!(r[0].1, "https://starwars.fandom.com/?curid=777");
+        assert!(r[0].2.contains("Jedi"));
+        assert!(parse_fandom(r#"{"query":{"search":[]}}"#, "starwars").is_empty());
+        assert!(parse_fandom("bu json değil", "marvel").is_empty());
+    }
+
+    #[test]
+    fn intarchive_parse() {
+        // Tür + açıklama birleşir, türsüz yedeğe düşer.
+        let body = r#"{"response":{"docs":[{"identifier":"test123","title":"Test Arşivi","description":"Arşiv açıklaması burada.","mediatype":"texts"},{"identifier":"sessiz456","title":"Sessiz Kayıt","description":"","mediatype":"movies"}]}}"#;
+        let r = parse_intarchive(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "Test Arşivi");
+        assert_eq!(r[0].1, "https://archive.org/details/test123");
+        assert!(r[0].2.contains("texts"));
+        assert!(r[0].2.contains("Arşiv açıklaması"));
+        assert_eq!(r[1].2, "movies");
+        assert!(parse_intarchive(r#"{"response":{"docs":[]}}"#).is_empty());
+        assert!(parse_intarchive("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn medium_parse() {
+        // 2 item: CDATA'lı + açıklamalı.
+        let body = r#"<?xml version="1.0"?><rss><channel><title>test</title>
+<item><title><![CDATA[Birinci Yazı]]></title><link>https://medium.com/@ornek/birinci-abc123</link><description>Birinci açıklama metni.</description></item>
+<item><title>İkinci Yazı</title><link>https://medium.com/@ornek/ikinci-def456</link><description></description></item>
+</channel></rss>"#;
+        let r = parse_medium(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "Birinci Yazı");
+        assert!(r[0].1.contains("medium.com"));
+        assert!(r[0].2.contains("Birinci açıklama"));
+        assert_eq!(r[1].2, "Medium yazısı");
+        assert!(parse_medium("<rss><channel></channel></rss>").is_empty());
+        assert!(parse_medium("bu rss değil").is_empty());
+    }
+
+    #[test]
+    fn substack_parse() {
+        // publications şeması alınır.
+        let body = r#"{"publications":[{"name":"Örnek Bülten","subdomain":"ornek","description":"Haftalık teknoloji yazısı."}]}"#;
+        let r = parse_substack(body);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "Örnek Bülten");
+        assert_eq!(r[0].1, "https://ornek.substack.com");
+        assert!(r[0].2.contains("Haftalık"));
+        // results varyantı da denenir.
+        let varyant = r#"{"results":[{"name":"Varyant Bülten","subdomain":"varyant","description":""}]}"#;
+        let r2 = parse_substack(varyant);
+        assert_eq!(r2.len(), 1);
+        assert_eq!(r2[0].2, "Substack yayını");
+        // Boş results halleri sessiz döner.
+        assert!(parse_substack(r#"{"publications":[]}"#).is_empty());
+        assert!(parse_substack(r#"{"results":[]}"#).is_empty());
+        assert!(parse_substack(r#"{}"#).is_empty());
+        assert!(parse_substack("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn coingecko_parse() {
+        let body = r#"{"coins":[{"id":"bitcoin","name":"Bitcoin","symbol":"btc"},{"id":"bos","name":"","symbol":"x"}]}"#;
+        let r = parse_coingecko(body);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "Bitcoin (BTC)");
+        assert_eq!(r[0].1, "https://www.coingecko.com/en/coins/bitcoin");
+        assert!(r[0].2.contains("BTC"));
+        assert!(parse_coingecko(r#"{"coins":[]}"#).is_empty());
+        assert!(parse_coingecko("bu json değil").is_empty());
+    }
+
+    #[test]
+    #[ignore]
+    fn musicbrainz_canli() {
+        let mut o = Vec::new();
+        let mut s = Vec::new();
+        src_musicbrainz("madonna", &mut o, &mut s);
+        assert!(!o.is_empty(), "MusicBrainz sonuç dönmedi");
+    }
+
+    #[test]
+    #[ignore]
+    fn archive_canli() {
+        let mut o = Vec::new();
+        let mut s = Vec::new();
+        src_intarchive("rust", &mut o, &mut s);
+        assert!(!o.is_empty(), "IntArchive sonuç dönmedi");
+    }
+
+    #[test]
+    #[ignore]
+    fn dictionary_canli() {
+        let mut o = Vec::new();
+        let mut s = Vec::new();
+        src_dictionary("test", &mut o, &mut s);
+        assert!(!o.is_empty(), "Dictionary sonuç dönmedi");
+    }
 }
 
 /// Sorgu terimlerinin başlık+a açıklamada bulunma oranı (derin tohum kapısı).
 fn overlap(query: &str, title: &str, snippet: &str) -> f64 {
-    let terms: Vec<String> = query
-        .to_lowercase()
+    // Körüksüz katlamalı (typo/körüklü Türkçe derin kapıdan geçsin).
+    let terms: Vec<String> = crate::research::fold_tr(query)
         .split(|c: char| !c.is_alphanumeric())
         .filter(|s| s.chars().count() > 2)
         .map(|s| s.to_string())
@@ -5332,9 +7690,13 @@ fn overlap(query: &str, title: &str, snippet: &str) -> f64 {
     if terms.is_empty() {
         return 0.0;
     }
-    let hay = format!("{} {}", title.to_lowercase(), snippet.to_lowercase());
+    let hay = format!(
+        "{} {}",
+        crate::research::fold_tr(title),
+        crate::research::fold_tr(snippet)
+    );
     // tam sorgu geçiyorsa direkt 1.0
-    if hay.contains(&query.to_lowercase()) {
+    if hay.contains(&crate::research::fold_tr(query)) {
         return 1.0;
     }
     terms.iter().filter(|t| hay.contains(t.as_str())).count() as f64 / terms.len() as f64
