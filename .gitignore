@@ -1,10 +1,12 @@
 /target
+cli/target
 # Build artifacts (rebuildable, never commit)
 /release/
 *.exe
 *.WebView2/
 *.AppImage
 noral-web-linux-*
+noral-cli-linux-*
 # Secrets — API keys live NEXT TO the exe, never in git
 *-key.txt
 # Local runtime data (cache, trained model)
