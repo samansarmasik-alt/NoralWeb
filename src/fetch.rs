@@ -6241,6 +6241,522 @@ fn src_coingecko(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String
     }
 }
 
+/// Odysee gövdesinden (başlık, odysee-url, kanal+a açıklama) çıkarır — dizi yoksa boş döner.
+fn parse_odysee(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(10) {
+        let ad = it.get("name").and_then(|x| x.as_str()).unwrap_or("");
+        let kimlik = it
+            .get("claimId")
+            .and_then(|x| x.as_str())
+            .or_else(|| it.get("claim_id").and_then(|x| x.as_str()))
+            .unwrap_or("");
+        if ad.trim().is_empty() || kimlik.trim().is_empty() {
+            continue;
+        }
+        let baslik = it.get("title").and_then(|x| x.as_str()).unwrap_or("");
+        let baslik = if baslik.trim().is_empty() { ad } else { baslik };
+        if baslik.trim().is_empty() {
+            continue;
+        }
+        let kanal = it.get("channel").and_then(|x| x.as_str()).unwrap_or("");
+        let acik = it.get("description").and_then(|x| x.as_str()).unwrap_or("");
+        let parca = match (kanal.trim().is_empty(), acik.trim().is_empty()) {
+            (true, true) => "Odysee videosu".to_string(),
+            (true, false) => acik.chars().take(300).collect(),
+            (false, true) => kanal.to_string(),
+            (false, false) => format!("{} · {}", kanal, acik.chars().take(280).collect::<String>()),
+        };
+        out.push((
+            baslik.to_string(),
+            format!("https://odysee.com/{}:{}", ad, kimlik),
+            parca,
+        ));
+        if out.len() >= 10 {
+            break;
+        }
+    }
+    out
+}
+
+/// 74) Odysee video araması (lighthouse, anahtarsız).
+fn src_odysee(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!(
+        "https://lighthouse.odysee.tv/search?s={}&size=10&from=0&include=channel,title,description,duration&mediaType=video",
+        enc(query)
+    )) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_odysee(&body).into_iter().take(10) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "odysee".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("Odysee({})", n));
+    }
+}
+
+/// Mixcloud gövdesinden (etiketli-ad, url, tür-notu) çıkarır — data yoksa boş döner.
+fn parse_mixcloud(body: &str, etiket: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("data").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(5) {
+        let (ad, bag) = (
+            it.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+            it.get("url").and_then(|x| x.as_str()).unwrap_or(""),
+        );
+        if ad.trim().is_empty() || bag.is_empty() {
+            continue;
+        }
+        if !(bag.starts_with("http://") || bag.starts_with("https://")) {
+            continue;
+        }
+        let parca = if etiket == "kullanıcı" {
+            "Mixcloud kullanıcısı".to_string()
+        } else {
+            "Mixcloud yayını".to_string()
+        };
+        out.push((format!("[{}] {}", etiket, ad), bag.to_string(), parca));
+        if out.len() >= 5 {
+            break;
+        }
+    }
+    out
+}
+
+/// 75) Mixcloud kullanıcı+yayın araması (çift istek, anahtarsız).
+fn src_mixcloud(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let mut n = 0;
+    if let Some(body) = get_text(&format!(
+        "https://api.mixcloud.com/search/?q={}&type=user",
+        enc(query)
+    )) {
+        for (ti, ur, sn) in parse_mixcloud(&body, "kullanıcı").into_iter().take(5) {
+            out.push(Candidate {
+                title: ti,
+                url: ur,
+                snippet: sn,
+                source: "mixcloud".into(),
+                depth: 0,
+                page: String::new(),
+            });
+            n += 1;
+        }
+    }
+    if let Some(body) = get_text(&format!(
+        "https://api.mixcloud.com/search/?q={}&type=cloudcast",
+        enc(query)
+    )) {
+        for (ti, ur, sn) in parse_mixcloud(&body, "yayın").into_iter().take(5) {
+            out.push(Candidate {
+                title: ti,
+                url: ur,
+                snippet: sn,
+                source: "mixcloud".into(),
+                depth: 0,
+                page: String::new(),
+            });
+            n += 1;
+        }
+    }
+    if n > 0 {
+        sources.push(format!("Mixcloud({})", n));
+    }
+}
+
+/// Radio gövdesinden (istasyon-adı, stream-url, etiket+ülke) çıkarır — dizi yoksa boş döner.
+fn parse_radio(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(8) {
+        let ad = it.get("name").and_then(|x| x.as_str()).unwrap_or("");
+        if ad.trim().is_empty() {
+            continue;
+        }
+        let coz = it.get("url_resolved").and_then(|x| x.as_str()).unwrap_or("");
+        let ana = it.get("homepage").and_then(|x| x.as_str()).unwrap_or("");
+        // Akış boşsa ana sayfaya düş — ikisi de boşsa atla.
+        let bag = if coz.trim().is_empty() { ana } else { coz };
+        if bag.trim().is_empty() {
+            continue;
+        }
+        if !(bag.starts_with("http://") || bag.starts_with("https://")) {
+            continue;
+        }
+        let etiket = it.get("tags").and_then(|x| x.as_str()).unwrap_or("");
+        let ulke = it.get("country").and_then(|x| x.as_str()).unwrap_or("");
+        let parca = match (etiket.trim().is_empty(), ulke.trim().is_empty()) {
+            (true, true) => "Radyo istasyonu".to_string(),
+            (true, false) => ulke.to_string(),
+            (false, true) => etiket.chars().take(300).collect(),
+            (false, false) => format!("{} · {}", etiket.chars().take(280).collect::<String>(), ulke),
+        };
+        out.push((ad.to_string(), bag.to_string(), parca));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// 76) Radio-Browser istasyon araması (özel UA şart, anahtarsız).
+fn src_radio(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let url = format!(
+        "https://de1.api.radio-browser.info/json/stations/search?name={}&limit=8&hidebroken=true",
+        enc(query)
+    );
+    let Some(body) = with_retry(|| {
+        agent()
+            .get(&url)
+            .set("User-Agent", "NoralWeb/0.37 (noralweb@example.com)")
+            .set("Accept", "application/json")
+            .call()
+    })
+    .ok()
+    .and_then(|r| r.into_string().ok())
+    else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_radio(&body).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "radio".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("Radio({})", n));
+    }
+}
+
+/// Gutendex gövdesinden (kitap-başlığı, gutenberg-url, yazarlar) çıkarır — results yoksa boş döner.
+fn parse_gutendex(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("results").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(8) {
+        let kimlik = it
+            .get("id")
+            .and_then(|x| x.as_u64())
+            .map(|n| n.to_string())
+            .or_else(|| it.get("id").and_then(|x| x.as_str()).map(|s| s.to_string()))
+            .unwrap_or_default();
+        let baslik = it.get("title").and_then(|x| x.as_str()).unwrap_or("");
+        if kimlik.trim().is_empty() || baslik.trim().is_empty() {
+            continue;
+        }
+        let yazarlar: Vec<String> = it
+            .get("authors")
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter()
+                    .take(3)
+                    .filter_map(|y| y.get("name").and_then(|x| x.as_str()))
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let parca = if yazarlar.is_empty() {
+            "Gutendex kitabı".to_string()
+        } else {
+            yazarlar.join(", ")
+        };
+        out.push((
+            baslik.to_string(),
+            format!("https://www.gutenberg.org/ebooks/{}", kimlik),
+            parca,
+        ));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// 77) Gutendex kitap araması (kesintili servis — boşsa sessiz dön, anahtarsız).
+fn src_gutendex(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!("https://gutendex.com/books?search={}", enc(query))) else {
+        return;
+    };
+    // Kesintili servis — boş gövde sessiz döner.
+    if body.trim().is_empty() {
+        return;
+    }
+    let mut n = 0;
+    for (ti, ur, sn) in parse_gutendex(&body).into_iter().take(8) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "gutendex".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("Gutendex({})", n));
+    }
+}
+
+/// Seznam gömülü yükünü bulur — data-search-page-payload JSON bloğu, tutmazsa None.
+fn seznam_yuku(body: &str) -> Option<serde_json::Value> {
+    let isaret = body.find("data-search-page-payload")?;
+    let sonrasi = &body[isaret..];
+    let bas = sonrasi.find('{').map(|i| isaret + i)?;
+    let b = body.as_bytes();
+    let mut derinlik: i32 = 0;
+    let mut dize = false;
+    let mut kacis = false;
+    let mut i = bas;
+    let mut son: Option<usize> = None;
+    while i < b.len() {
+        let c = b[i];
+        if kacis {
+            kacis = false;
+            i += 1;
+            continue;
+        }
+        if c == b'\\' && dize {
+            kacis = true;
+            i += 1;
+            continue;
+        }
+        if c == b'"' {
+            dize = !dize;
+            i += 1;
+            continue;
+        }
+        if dize {
+            i += 1;
+            continue;
+        }
+        if c == b'{' {
+            derinlik += 1;
+        } else if c == b'}' {
+            derinlik -= 1;
+            if derinlik == 0 {
+                son = Some(i);
+                break;
+            }
+        }
+        i += 1;
+        if i - bas > 500_000 {
+            break;
+        }
+    }
+    let son = son?;
+    let dilim = body.get(bas..=son)?;
+    serde_json::from_str(dilim).ok()
+}
+
+/// Seznam yükünde ftxt-organic düğümlerini özyineli toplar.
+fn seznam_gezin(v: &serde_json::Value, out: &mut Vec<(String, String, String)>) {
+    if out.len() >= 10 {
+        return;
+    }
+    match v {
+        serde_json::Value::Array(a) => {
+            for x in a {
+                if out.len() >= 10 {
+                    break;
+                }
+                seznam_gezin(x, out);
+            }
+        }
+        serde_json::Value::Object(m) => {
+            if m.get("service").and_then(|x| x.as_str()) == Some("ftxt-organic") {
+                if let Some(parca) = m.get("data").and_then(|d| d.get("snippet")) {
+                    let (bag, baslik, acik) = (
+                        parca.get("url").and_then(|x| x.as_str()).unwrap_or(""),
+                        parca.get("title").and_then(|x| x.as_str()).unwrap_or(""),
+                        parca.get("description").and_then(|x| x.as_str()).unwrap_or(""),
+                    );
+                    if !baslik.trim().is_empty()
+                        && (bag.starts_with("http://") || bag.starts_with("https://"))
+                    {
+                        let dusuk = bag.to_lowercase();
+                        if !BAD_EXT.iter().any(|e| dusuk.contains(e)) {
+                            out.push((
+                                strip_tags(baslik),
+                                bag.to_string(),
+                                strip_tags(acik).chars().take(300).collect(),
+                            ));
+                            if out.len() >= 10 {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            for (_, x) in m.iter() {
+                if out.len() >= 10 {
+                    break;
+                }
+                seznam_gezin(x, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Seznam gövdesinden (başlık, url, açıklama) çıkarır — yük tutmazsa boş döner.
+fn parse_seznam(body: &str) -> Vec<(String, String, String)> {
+    let Some(kok) = seznam_yuku(body) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    seznam_gezin(&kok, &mut out);
+    out
+}
+
+/// 78) Seznam organik sonuçlar (gömülü yük, kırılgan — tutmazsa sessiz).
+fn src_seznam(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!("https://search.seznam.cz/?q={}", enc(query))) else {
+        return;
+    };
+    // Yapı tutmazsa sessiz dönülür.
+    if !body.contains("data-search-page-payload") {
+        return;
+    }
+    let mut n = 0;
+    for (ti, ur, sn) in parse_seznam(&body).into_iter().take(10) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "seznam".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("Seznam({})", n));
+    }
+}
+
+/// Mwmbl gövdesinden (başlık, url, ilk-özet) çıkarır — dizi yoksa boş döner.
+fn parse_mwmbl(body: &str) -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in arr.iter().take(10) {
+        let bag = it.get("url").and_then(|x| x.as_str()).unwrap_or("");
+        if bag.is_empty() || !(bag.starts_with("http://") || bag.starts_with("https://")) {
+            continue;
+        }
+        let dusuk = bag.to_lowercase();
+        if BAD_EXT.iter().any(|e| dusuk.contains(e)) {
+            continue;
+        }
+        // Başlık: title[]:{value} parçaları birleşir.
+        let baslik = it
+            .get("title")
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|e| {
+                        if let Some(s) = e.as_str() {
+                            let s = s.trim();
+                            if s.is_empty() { None } else { Some(s.to_string()) }
+                        } else {
+                            e.get("value").and_then(|x| x.as_str()).map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
+        if baslik.trim().is_empty() {
+            continue;
+        }
+        // Özet: ilk extract (dize ya da {value}).
+        let ozet = it
+            .get("extract")
+            .and_then(|x| x.as_array())
+            .and_then(|a| a.first())
+            .map(|e| {
+                if let Some(s) = e.as_str() {
+                    s.to_string()
+                } else {
+                    e.get("value").and_then(|x| x.as_str()).unwrap_or("").to_string()
+                }
+            })
+            .unwrap_or_default();
+        let parca: String = if ozet.trim().is_empty() {
+            "Mwmbl sonucu".to_string()
+        } else {
+            ozet.chars().take(300).collect()
+        };
+        out.push((baslik, bag.to_string(), parca));
+        if out.len() >= 10 {
+            break;
+        }
+    }
+    out
+}
+
+/// 79) Mwmbl bağımsız indeks (sonda slash + s parametresi ŞART, ?q= 422 verir).
+fn src_mwmbl(query: &str, out: &mut Vec<Candidate>, sources: &mut Vec<String>) {
+    let Some(body) = get_text(&format!("https://api.mwmbl.org/search/?s={}", enc(query))) else {
+        return;
+    };
+    let mut n = 0;
+    for (ti, ur, sn) in parse_mwmbl(&body).into_iter().take(10) {
+        out.push(Candidate {
+            title: ti,
+            url: ur,
+            snippet: sn,
+            source: "mwmbl".into(),
+            depth: 0,
+            page: String::new(),
+        });
+        n += 1;
+    }
+    if n > 0 {
+        sources.push(format!("Mwmbl({})", n));
+    }
+}
+
 /// Sayfa çek: başlık + metin + dış linkler + meta. Yoksa None.
 pub struct PageData {
     pub title: String,
@@ -6643,6 +7159,12 @@ pub fn live_search(query: &str, deep: bool, apx: u8) -> (Vec<Candidate>, Vec<Str
         mk(src_medium),
         mk(src_substack),
         mk(src_coingecko),
+        mk(src_odysee),
+        mk(src_mixcloud),
+        mk(src_radio),
+        mk(src_gutendex),
+        mk(src_seznam),
+        mk(src_mwmbl),
     ];
     // Derin modda SearXNG 2. sayfa da paralel koşar.
     if deep {
@@ -6675,7 +7197,7 @@ pub fn live_search(query: &str, deep: bool, apx: u8) -> (Vec<Candidate>, Vec<Str
 
     // Suskun kaynaklar (UI'da gri görünür).
     // Google-H: gizli hasat yedeği (main.rs rank öncesi ekler).
-    const BEKLENEN: [&str; 71] = [
+    const BEKLENEN: [&str; 80] = [
         "DuckDuckGo", "Wikipedia-tr", "Wikipedia-en", "WikiTam-tr", "WikiTam-en",
         "Wikidata", "DBpedia", "GitHub", "Stack", "SO-kullanıcı", "HN", "Akademik", "npm",
         "crates", "arXiv", "DDG-Web", "Wiby", "SearXNG", "CC", "Exa", "Tavily", "LangSearch",
@@ -6687,6 +7209,8 @@ pub fn live_search(query: &str, deep: bool, apx: u8) -> (Vec<Candidate>, Vec<Str
         "Codeberg", "Maven", "RubyGems", "Packagist", "Hex", "iTunes",
         "PubMed", "NuGet", "PubDev", "MusicBrainz", "TVMaze", "Dailymotion", "PeerTube",
         "Dictionary", "Commons", "Fandom", "IntArchive", "Medium", "Substack", "CoinGecko",
+        "Odysee", "Mixcloud", "Radio", "Gutendex", "Seznam", "Mwmbl",
+        "Qwant-H", "Startpage-H", "Mojeek-H",
     ];
     let mut silent: Vec<String> = Vec::new();
     for b in BEKLENEN {
@@ -7842,6 +8366,119 @@ mod tests {
         let mut s = Vec::new();
         src_dictionary("test", &mut o, &mut s);
         assert!(!o.is_empty(), "Dictionary sonuç dönmedi");
+    }
+
+    #[test]
+    fn odysee_parse() {
+        // Gerçek şema: ad + claimId'den odysee bağlantısı kurulur.
+        let body = r#"[{"name":"test-video","claimId":"abc123","channel":"Test Kanalı","title":"Test Başlığı","description":"Açıklama metni burada."}]"#;
+        let r = parse_odysee(body);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "Test Başlığı");
+        assert_eq!(r[0].1, "https://odysee.com/test-video:abc123");
+        assert!(r[0].2.contains("Test Kanalı"));
+        assert!(r[0].2.contains("Açıklama"));
+        // Boş / bozuk haller sessiz döner.
+        assert!(parse_odysee("[]").is_empty());
+        assert!(parse_odysee("bu json değil").is_empty());
+        assert!(parse_odysee(r#"{}"#).is_empty());
+    }
+
+    #[test]
+    fn mixcloud_parse() {
+        // Kullanıcı + yayın aynı şema, başlığa tür öneki konur.
+        let kull = r#"{"data":[{"name":"Kullanıcı Adı","url":"https://www.mixcloud.com/kullanici/"}]}"#;
+        let r = parse_mixcloud(kull, "kullanıcı");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "[kullanıcı] Kullanıcı Adı");
+        assert_eq!(r[0].1, "https://www.mixcloud.com/kullanici/");
+        assert!(r[0].2.contains("kullanıcı"));
+        let yay = r#"{"data":[{"name":"Akşam Yayını","url":"https://www.mixcloud.com/k/aksam/"}]}"#;
+        let r2 = parse_mixcloud(yay, "yayın");
+        assert_eq!(r2[0].0, "[yayın] Akşam Yayını");
+        assert!(r2[0].2.contains("yayını"));
+        assert!(parse_mixcloud(r#"{"data":[]}"#, "kullanıcı").is_empty());
+        assert!(parse_mixcloud("bu json değil", "yayın").is_empty());
+    }
+
+    #[test]
+    fn radio_parse() {
+        // Dolu akış + boş akışta ana sayfa yedeği + boş ana sayfa hali.
+        let body = r#"[
+            {"name":"Test Radyo","url_resolved":"https://stream.ornek.com/1","homepage":"https://ornek.com","tags":"pop, rock","country":"Turkey"},
+            {"name":"Yedek Radyo","url_resolved":"","homepage":"https://yedek.com","tags":"","country":""},
+            {"name":"Kırık Radyo","url_resolved":"","homepage":"","tags":"x","country":"y"}
+        ]"#;
+        let r = parse_radio(body);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "Test Radyo");
+        assert_eq!(r[0].1, "https://stream.ornek.com/1");
+        assert!(r[0].2.contains("pop"));
+        // Boş akış ana sayfaya düşer.
+        assert_eq!(r[1].1, "https://yedek.com");
+        assert_eq!(r[1].2, "Radyo istasyonu");
+        // Boş / bozuk haller.
+        assert!(parse_radio("[]").is_empty());
+        assert!(parse_radio("bu json değil").is_empty());
+    }
+
+    #[test]
+    fn gutendex_parse() {
+        // Kimlikten gutenberg bağlantısı, yazarlar özet olur.
+        let body = r#"{"count":1,"results":[{"id":123,"title":"Test Kitabı","authors":[{"name":"Yazar Adı"}]}]}"#;
+        let r = parse_gutendex(body);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "Test Kitabı");
+        assert_eq!(r[0].1, "https://www.gutenberg.org/ebooks/123");
+        assert!(r[0].2.contains("Yazar Adı"));
+        assert!(parse_gutendex(r#"{"results":[]}"#).is_empty());
+        assert!(parse_gutendex("bu json değil").is_empty());
+        assert!(parse_gutendex(r#"{}"#).is_empty());
+    }
+
+    #[test]
+    fn seznam_parse() {
+        // Gömülü payload içinde ftxt-organic alınır, diğer servis atlanır.
+        let body = r#"<html><body><div data-search-page-payload='{"entities":{"a":{"service":"ftxt-organic","data":{"snippet":{"url":"https://example.com/1","title":"Başlık 1","description":"Açıklama 1"}}},"b":{"service":"reklam","data":{"snippet":{"url":"https://reklam.com","title":"Reklam","description":"x"}}}}}'>x</div></body></html>"#;
+        let r = parse_seznam(body);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "Başlık 1");
+        assert_eq!(r[0].1, "https://example.com/1");
+        assert!(r[0].2.contains("Açıklama 1"));
+        // Yapı tutmazsa sessiz dön.
+        assert!(parse_seznam("<html><body>sonuç yok</body></html>").is_empty());
+        assert!(parse_seznam("bu html değil").is_empty());
+    }
+
+    #[test]
+    fn mwmbl_parse() {
+        // Başlık dizisi birleşir, özet ilk extract olur.
+        let body = r#"[{"url":"https://example.com/1","title":[{"value":"Birinci"},{"value":"Başlık"}],"extract":["Özet metni burada.","ikinci özet"]}]"#;
+        let r = parse_mwmbl(body);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "Birinci Başlık");
+        assert_eq!(r[0].1, "https://example.com/1");
+        assert!(r[0].2.contains("Özet metni"));
+        assert!(parse_mwmbl("[]").is_empty());
+        assert!(parse_mwmbl("bu json değil").is_empty());
+    }
+
+    #[test]
+    #[ignore]
+    fn odysee_canli() {
+        let mut o = Vec::new();
+        let mut s = Vec::new();
+        src_odysee("rust", &mut o, &mut s);
+        assert!(!o.is_empty(), "Odysee sonuç dönmedi");
+    }
+
+    #[test]
+    #[ignore]
+    fn mwmbl_canli() {
+        let mut o = Vec::new();
+        let mut s = Vec::new();
+        src_mwmbl("rust", &mut o, &mut s);
+        assert!(!o.is_empty(), "Mwmbl sonuç dönmedi");
     }
 }
 

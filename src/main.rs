@@ -147,6 +147,7 @@ const HARVEST_JS: &str = r#"(function(){
     }catch(e){}
   }
   window.addEventListener('load',function(){setTimeout(collect,3000);});
+  document.addEventListener('DOMContentLoaded',function(){setTimeout(collect,2000);});
   setTimeout(collect,12000);
 })();"#;
 
@@ -284,7 +285,7 @@ fn harvest_bos_neden(json: Option<&str>, etiket: &str) -> String {
 }
 
 /// Bloklu sayfa hasadı: gizli WebView ile render edip link toplar.
-/// 10sn bekler — hata/timeout sessiz boş + neden döner.
+/// 14sn bekler — hata/timeout sessiz boş + neden döner.
 fn harvest_page_blocking(
     proxy: &EventLoopProxy<UserEvent>,
     url: String,
@@ -293,13 +294,13 @@ fn harvest_page_blocking(
     let id = NEXT_HARVEST.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let (tx, rx) = std::sync::mpsc::channel();
     let _ = proxy.send_event(UserEvent::HarvestReq { id, url, tx });
-    // Yedek temizlik: sayfa asılı kalırsa yuvayı düşür (arama akışı 10sn bekler).
+    // Yedek temizlik: sayfa asılı kalırsa yuvayı düşür (arama akışı 14sn bekler).
     let tp = proxy.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(12));
+        std::thread::sleep(std::time::Duration::from_secs(16));
         let _ = tp.send_event(UserEvent::HarvestTimeout { id });
     });
-    match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+    match rx.recv_timeout(std::time::Duration::from_secs(14)) {
         Ok(json) => {
             let links = parse_harvest_links(&json);
             let neden = if links.is_empty() {
@@ -812,8 +813,13 @@ fn main() {
                     let need_g = !sources.iter().any(|s| s.starts_with("Google("));
                     let need_y = !sources.iter().any(|s| s.starts_with("Yandex("));
                     let need_e = !sources.iter().any(|s| s.starts_with("Ecosia("));
+                    let need_q = !sources.iter().any(|s| s.starts_with("Qwant("));
+                    let need_s = !sources.iter().any(|s| s.starts_with("Startpage("));
+                    let need_m = !sources.iter().any(|s| s.starts_with("Mojeek("));
                     let (pg, py, pe) = (proxy.clone(), proxy.clone(), proxy.clone());
+                    let (pq, ps, pm) = (proxy.clone(), proxy.clone(), proxy.clone());
                     let (qg, qy, qe) = (query.clone(), query.clone(), query.clone());
+                    let (qq, qs, qm) = (query.clone(), query.clone(), query.clone());
                     let hg = std::thread::spawn(move || {
                         if need_g {
                             let url = format!(
@@ -847,9 +853,39 @@ fn main() {
                             (Vec::new(), None)
                         }
                     });
+                    let hq = std::thread::spawn(move || {
+                        if need_q {
+                            let url = format!("https://www.qwant.com/?q={}", fetch::enc(&qq));
+                            harvest_page_blocking(&pq, url, "Qwant-H")
+                        } else {
+                            (Vec::new(), None)
+                        }
+                    });
+                    let hs = std::thread::spawn(move || {
+                        if need_s {
+                            let url = format!(
+                                "https://www.startpage.com/sp/search?query={}",
+                                fetch::enc(&qs)
+                            );
+                            harvest_page_blocking(&ps, url, "Startpage-H")
+                        } else {
+                            (Vec::new(), None)
+                        }
+                    });
+                    let hm = std::thread::spawn(move || {
+                        if need_m {
+                            let url = format!("https://www.mojeek.com/search?q={}", fetch::enc(&qm));
+                            harvest_page_blocking(&pm, url, "Mojeek-H")
+                        } else {
+                            (Vec::new(), None)
+                        }
+                    });
                     let (h_g, n_g) = hg.join().unwrap_or_default();
                     let (h_y, n_y) = hy.join().unwrap_or_default();
                     let (h_e, n_e) = he.join().unwrap_or_default();
+                    let (h_q, n_q) = hq.join().unwrap_or_default();
+                    let (h_s, n_s) = hs.join().unwrap_or_default();
+                    let (h_m, n_m) = hm.join().unwrap_or_default();
                     let mut merge = |h: Vec<(String, String)>,
                                      neden: Option<String>,
                                      etiket: &str,
@@ -877,6 +913,9 @@ fn main() {
                     merge(h_g, n_g, "Google-H", "harvest-google");
                     merge(h_y, n_y, "Yandex-H", "harvest-yandex");
                     merge(h_e, n_e, "Ecosia-H", "harvest-ecosia");
+                    merge(h_q, n_q, "Qwant-H", "harvest-qwant");
+                    merge(h_s, n_s, "Startpage-H", "harvest-startpage");
+                    merge(h_m, n_m, "Mojeek-H", "harvest-mojeek");
                     let was_cached = false;
                     let offline = cands.is_empty();
                     let cands = if offline {
