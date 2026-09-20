@@ -18,8 +18,8 @@ jobs:
         run: |
           cargo build --release --manifest-path cli/Cargo.toml
           cargo build --release --manifest-path cli/Cargo.toml --target x86_64-apple-darwin
-          cp target/release/noral-cli noral-cli-macos-arm64
-          cp target/x86_64-apple-darwin/release/noral-cli noral-cli-macos-x64
+          cp cli/target/release/noral-cli noral-cli-macos-arm64
+          cp cli/target/x86_64-apple-darwin/release/noral-cli noral-cli-macos-x64
           ./noral-cli-macos-arm64 --version
       - name: GUI (arm64 + x64) + .app paketi
         run: |
