@@ -23,12 +23,14 @@ jobs:
           echo "CLANG: $CLANG"
           test -x "$CLANG"
           echo "CLANG=$CLANG" >> $GITHUB_ENV
+          echo "NDK_BIN=$BIN" >> $GITHUB_ENV
       - name: Rust Android hedefi
         run: rustup target add aarch64-linux-android
       - name: CLI (aarch64-linux-android)
         env:
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ env.CLANG }}
           CC_aarch64_linux_android: ${{ env.CLANG }}
+          AR_aarch64_linux_android: ${{ env.NDK_BIN }}/llvm-ar
         run: |
           cargo build --release --manifest-path cli/Cargo.toml --target aarch64-linux-android
           cp cli/target/aarch64-linux-android/release/noral-cli noral-cli-android-arm64
