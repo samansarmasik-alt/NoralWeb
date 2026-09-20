@@ -396,11 +396,8 @@ pub struct TrainState {
     pub clicks: u32,
 }
 
-/// exe'nin yanındaki model dosyası (gömülü/Android: NORAL_DATA öncelikli).
+/// exe'nin yanındaki model dosyası.
 pub fn model_path() -> std::path::PathBuf {
-    if let Ok(ozel) = std::env::var("NORAL_DATA") {
-        return std::path::PathBuf::from(ozel).join("noral-model.json");
-    }
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))

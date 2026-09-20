@@ -22,12 +22,6 @@ pub fn appdata_dir() -> std::path::PathBuf {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        // Gömülü/Android: JNI init NORAL_DATA verirse orası (yoksa XDG).
-        if let Ok(ozel) = std::env::var("NORAL_DATA") {
-            let dizin = std::path::PathBuf::from(ozel);
-            let _ = std::fs::create_dir_all(&dizin);
-            return dizin;
-        }
         // Linux'ta APPDATA yoktur; XDG karşılığı $HOME/.config/NoralWeb (yoksa oluşturmayı dene, hata yut).
         let taban = std::env::var("HOME")
             .map(std::path::PathBuf::from)
